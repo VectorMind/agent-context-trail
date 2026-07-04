@@ -1,0 +1,93 @@
+# Cost estimation config for Agent Context Trail.
+#
+# Used only when the provider log/response does not report cost directly.
+# Rates are per-million-tokens (MTok), in USD, taken verbatim from the
+# official pricing page for each vendor. Re-check the "retrieved" date
+# periodically and update by hand when pricing changes — this file is
+# deliberately not auto-synced.
+schemaVersion: 1
+
+credit:
+  # 1 AI Credit (AIC), the unit shown in this extension's status bar,
+  # equals this many US dollars.
+  usdPerCredit: 0.01
+
+claude:
+  source: https://platform.claude.com/docs/en/about-claude/pricing
+  retrieved: "2026-07-04"
+  # cacheWrite5m / cacheWrite1h / cacheRead are prompt-caching write and hit
+  # rates. Anthropic documents these as fixed multipliers of baseInput
+  # (1.25x / 2x / 0.1x) but this file keeps the resolved absolute numbers so
+  # a rate change is a one-line diff instead of a recomputation.
+  models:
+    claude-fable-5:
+      baseInput: 10.00
+      cacheWrite5m: 12.50
+      cacheWrite1h: 20.00
+      cacheRead: 1.00
+      output: 50.00
+    claude-mythos-5:
+      baseInput: 10.00
+      cacheWrite5m: 12.50
+      cacheWrite1h: 20.00
+      cacheRead: 1.00
+      output: 50.00
+    claude-opus-4-8:
+      baseInput: 5.00
+      cacheWrite5m: 6.25
+      cacheWrite1h: 10.00
+      cacheRead: 0.50
+      output: 25.00
+    claude-opus-4-7:
+      baseInput: 5.00
+      cacheWrite5m: 6.25
+      cacheWrite1h: 10.00
+      cacheRead: 0.50
+      output: 25.00
+    claude-opus-4-6:
+      baseInput: 5.00
+      cacheWrite5m: 6.25
+      cacheWrite1h: 10.00
+      cacheRead: 0.50
+      output: 25.00
+    claude-opus-4-5:
+      baseInput: 5.00
+      cacheWrite5m: 6.25
+      cacheWrite1h: 10.00
+      cacheRead: 0.50
+      output: 25.00
+    claude-sonnet-5:
+      # Introductory pricing, in effect through 2026-08-31. Standard pricing
+      # ($3 / $3.75 / $6 / $0.30 / $15) takes effect 2026-09-01 — update this
+      # block on that date.
+      baseInput: 2.00
+      cacheWrite5m: 2.50
+      cacheWrite1h: 4.00
+      cacheRead: 0.20
+      output: 10.00
+    claude-sonnet-4-6:
+      baseInput: 3.00
+      cacheWrite5m: 3.75
+      cacheWrite1h: 6.00
+      cacheRead: 0.30
+      output: 15.00
+    claude-sonnet-4-5:
+      baseInput: 3.00
+      cacheWrite5m: 3.75
+      cacheWrite1h: 6.00
+      cacheRead: 0.30
+      output: 15.00
+    claude-haiku-4-5:
+      baseInput: 1.00
+      cacheWrite5m: 1.25
+      cacheWrite1h: 2.00
+      cacheRead: 0.10
+      output: 5.00
+  # Used when message.model isn't found above (new/renamed model). Current
+  # generation Sonnet rates are the safest general-purpose default.
+  fallback:
+    baseInput: 3.00
+    cacheWrite5m: 3.75
+    cacheWrite1h: 6.00
+    cacheRead: 0.30
+    output: 15.00

@@ -1,0 +1,86 @@
+{
+  "name": "agent-context-trail",
+  "displayName": "Agent Context Trail",
+  "description": "See how one agent conversation's context evolves, prompt by prompt: tokens, cache reuse, and cost for Claude Code, Codex, and GitHub Copilot.",
+  "version": "0.0.1",
+  "publisher": "vectormind",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "claude code",
+    "codex",
+    "copilot",
+    "tokens",
+    "cost",
+    "cache",
+    "context"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VectorMind/agent-context-trail.git"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentContextTrail.refresh",
+        "title": "Agent Context Trail: Refresh"
+      },
+      {
+        "command": "agentContextTrail.showSummary",
+        "title": "Agent Context Trail: Show Conversation Summary"
+      },
+      {
+        "command": "agentContextTrail.setCostUnit",
+        "title": "Agent Context Trail: Set Cost Unit"
+      }
+    ],
+    "configuration": {
+      "title": "Agent Context Trail",
+      "properties": {
+        "agentContextTrail.costUnit": {
+          "type": "string",
+          "enum": [
+            "credit",
+            "usd"
+          ],
+          "enumDescriptions": [
+            "AI Credit (1 AIC = $0.01)",
+            "US Dollars"
+          ],
+          "default": "credit",
+          "description": "Unit used to display cost in the status bar."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "node esbuild.js --production && vsce package --no-dependencies -o agent-context-trail.vsix",
+    "install:local": "code --install-extension agent-context-trail.vsix --force",
+    "reinstall": "npm run package && npm run install:local"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}
