@@ -30,9 +30,27 @@ export class StatusBarController implements vscode.Disposable {
     }
 
     const last = this.summary.requests[this.summary.requests.length - 1];
-    this.item.text = `$(comment-discussion) ${formatUsd(last.cost.usd)} | ${formatUsd(this.summary.totalCost.usd)}`;
+    this.item.text = `$(comment-discussion) ${this.primaryText(last)}`;
     this.item.tooltip = this.buildTooltip(last);
     this.item.show();
+  }
+
+  /**
+   * Cost is the default headline signal, but it's honestly unavailable for
+   * providers (e.g. Codex) that don't report per-token pricing. Rather than
+   * show "n/a | n/a" by default, fall back to that provider's own economic
+   * signal (rate-limit consumption), then to a plain prompt count.
+   */
+  private primaryText(last: PromptRequest): string {
+    const summary = this.summary!;
+    if (last.cost.usd !== undefined || summary.totalCost.usd !== undefined) {
+      return `${formatUsd(last.cost.usd)} | ${formatUsd(summary.totalCost.usd)}`;
+    }
+    const primaryPercent = summary.currentStatus?.rateLimits?.primary?.usedPercent;
+    if (primaryPercent !== undefined) {
+      return `${primaryPercent.toFixed(0)}% used`;
+    }
+    return `${summary.requests.length} prompt${summary.requests.length === 1 ? '' : 's'}`;
   }
 
   private buildTooltip(last: PromptRequest): vscode.MarkdownString {
@@ -46,14 +64,36 @@ export class StatusBarController implements vscode.Disposable {
       `_${summary.requests.length} prompt iteration${summary.requests.length === 1 ? '' : 's'} · ${providerLabel}_\n\n`
     );
     md.appendMarkdown('---\n\n');
-    md.appendMarkdown(`Last call: **${formatUsd(last.cost.usd)}**  \n`);
-    md.appendMarkdown(`Conversation total: **${formatUsd(summary.totalCost.usd)}**\n\n`);
-    md.appendMarkdown(`_Cost is ${summary.totalCost.source}; token detail is in the panel._\n\n`);
+    if (last.cost.usd !== undefined || summary.totalCost.usd !== undefined) {
+      md.appendMarkdown(`Last call: **${formatUsd(last.cost.usd)}**  \n`);
+      md.appendMarkdown(`Conversation total: **${formatUsd(summary.totalCost.usd)}**\n\n`);
+      md.appendMarkdown(`_Cost is ${summary.totalCost.source}; token detail is in the panel._\n\n`);
+    } else {
+      md.appendMarkdown(`_${providerLabel} does not report per-token cost; rate-limit consumption is shown instead._\n\n`);
+    }
+    appendRateLimits(md, summary);
     appendContextStatus(md, summary);
     md.appendMarkdown('---\n\n');
     md.appendMarkdown(`[Open panel](command:agentContextTrail.openPanel)`);
     return md;
   }
+}
+
+function appendRateLimits(md: vscode.MarkdownString, summary: ConversationSummary): void {
+  const rateLimits = summary.currentStatus?.rateLimits;
+  if (!rateLimits?.primary && !rateLimits?.secondary) return;
+
+  const windows: string[] = [];
+  if (rateLimits.primary?.usedPercent !== undefined) {
+    windows.push(`primary ${rateLimits.primary.usedPercent.toFixed(0)}%`);
+  }
+  if (rateLimits.secondary?.usedPercent !== undefined) {
+    windows.push(`secondary ${rateLimits.secondary.usedPercent.toFixed(0)}%`);
+  }
+  if (windows.length === 0) return;
+
+  const prefix = rateLimits.planType ? `${rateLimits.planType} plan · ` : '';
+  md.appendMarkdown(`${prefix}${windows.join(' · ')}\n\n`);
 }
 
 function appendContextStatus(md: vscode.MarkdownString, summary: ConversationSummary): void {

@@ -10,6 +10,7 @@ import {
   ToolCallInfo,
   UsageTokens
 } from '../../domain/types';
+import { PricingService } from '../../pricing/pricingService';
 
 interface CodexTokenUsage {
   input_tokens?: number;
@@ -39,6 +40,7 @@ interface CodexMeta {
   lastAt?: string;
   requestCount: number;
   totalUsage: UsageTokens;
+  totalCostUsd: number;
   workspacePath?: string;
 }
 
@@ -213,7 +215,11 @@ function applyLatestTokenSnapshot(turn: PendingTurn): void {
   }
 }
 
-export async function scanCodexSessionMeta(filePath: string, titleFromIndex?: string): Promise<CodexMeta> {
+export async function scanCodexSessionMeta(
+  filePath: string,
+  titleFromIndex: string | undefined,
+  pricing: PricingService
+): Promise<CodexMeta> {
   const rl = readline.createInterface({
     input: fs.createReadStream(filePath, { encoding: 'utf8' }),
     crlfDelay: Infinity
@@ -225,6 +231,7 @@ export async function scanCodexSessionMeta(filePath: string, titleFromIndex?: st
   let lastAt: string | undefined;
   let workspacePath: string | undefined;
   let totalUsage: UsageTokens = { ...EMPTY_USAGE };
+  let totalCostUsd = 0;
   let requestCount = 0;
   let current: PendingTurn | null = null;
 
@@ -232,6 +239,7 @@ export async function scanCodexSessionMeta(filePath: string, titleFromIndex?: st
     if (!current) return;
     applyLatestTokenSnapshot(current);
     totalUsage = addUsage(totalUsage, current.request.usage);
+    totalCostUsd += pricing.estimateCodexCost(current.request.model, current.request.usage).usd ?? 0;
     requestCount += 1;
     current = null;
   };
@@ -318,6 +326,7 @@ export async function scanCodexSessionMeta(filePath: string, titleFromIndex?: st
     lastAt,
     requestCount,
     totalUsage,
+    totalCostUsd,
     workspacePath
   };
 }
@@ -325,7 +334,8 @@ export async function scanCodexSessionMeta(filePath: string, titleFromIndex?: st
 export async function parseCodexSession(
   filePath: string,
   sessionId: string,
-  titleFromIndex?: string
+  titleFromIndex: string | undefined,
+  pricing: PricingService
 ): Promise<ConversationSummary> {
   const rl = readline.createInterface({
     input: fs.createReadStream(filePath, { encoding: 'utf8' }),
@@ -349,6 +359,7 @@ export async function parseCodexSession(
       if (Number.isFinite(derived) && derived >= 0) current.request.durationMs = derived;
     }
     applyLatestTokenSnapshot(current);
+    current.request.cost = pricing.estimateCodexCost(current.request.model, current.request.usage);
     requests.push(current.request);
     currentStatus = updateContextStatus(currentStatus, current.request, workspacePath || undefined);
     if (current.latestRateLimits) {
@@ -485,6 +496,7 @@ export async function parseCodexSession(
   finalize();
 
   const totalUsage = requests.reduce((acc, request) => addUsage(acc, request.usage), { ...EMPTY_USAGE });
+  const totalCostUsd = requests.reduce((sum, r) => sum + (r.cost.usd ?? 0), 0);
 
   return {
     id: sessionId,
@@ -494,7 +506,7 @@ export async function parseCodexSession(
     updatedAt,
     requests,
     totalUsage,
-    totalCost: { source: 'unavailable' },
+    totalCost: { usd: totalCostUsd, source: 'estimated' },
     currentStatus
   };
 }

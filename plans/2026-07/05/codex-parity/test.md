@@ -120,3 +120,33 @@ Remaining gaps:
 - No live VS Code panel screenshot or manual hover check was run in this turn,
   so visual layout and interaction were verified only indirectly through the
   build and parser outputs.
+
+## Amendment Verification - 2026-07-05
+
+- `npm.cmd run typecheck` - passed.
+- `npm.cmd run build` - passed.
+- `rg -n "Â|â" src/` - no remaining mojibake in source.
+- `npx.cmd tsc -p tsconfig.json --outDir .tmp/tsproof` (removed after the run)
+  - direct proof against the real local Codex data used by the earlier
+    packet proof:
+    - `listCodexConversations(cwd, pricing)` still returned `7` conversations.
+    - Top conversation `019f32e5-2e9b-7e51-b8f8-792baab24010`: request count
+      `6`, total tokens `1020622`, **`totalCostUsd: 1.729059`** (previously
+      `undefined`).
+    - Latest request: model `gpt-5.4`, cost `{ usd: 0.6558715, source:
+      'estimated' }` (previously `{ source: 'unavailable' }`).
+    - Conversation `totalCost`: `{ usd: 1.729059, source: 'estimated' }`.
+
+Behavioral checks covered by this amendment's proof:
+
+- Codex requests and conversation totals now carry an `estimated` USD cost
+  computed from real local token counts against the new `codex` rate table,
+  matching the `gpt-5.4` model actually observed in the session.
+- Rate-limit status remains available as a separate field on
+  `currentStatus.rateLimits`, unchanged by the cost estimation change.
+
+Remaining gaps:
+
+- No live VS Code panel screenshot was taken to confirm the corrected
+  encoding and "Prompt" labels render correctly on screen; verified by source
+  inspection and build only.

@@ -86,3 +86,49 @@ claude:
     cacheWrite1h: 6.00
     cacheRead: 0.30
     output: 15.00
+
+# Codex has no per-token cache-write tier (no cacheCreationTokens in its local
+# logs), so its rate shape drops cacheWrite5m/cacheWrite1h entirely. These are
+# the vendor's standard metered API list rates, applied to Codex's local token
+# counts as a bring-your-own-token equivalent even though Codex itself is
+# usually billed through a subscription/rate-limit plan, not per token.
+codex:
+  source: https://developers.openai.com/api/docs/pricing
+  retrieved: "2026-07-05"
+  models:
+    gpt-5.3-codex:
+      baseInput: 1.75
+      cacheRead: 0.175
+      output: 14.00
+    gpt-5.4:
+      baseInput: 2.50
+      cacheRead: 0.25
+      output: 15.00
+    gpt-5.4-mini:
+      baseInput: 0.75
+      cacheRead: 0.075
+      output: 4.50
+    gpt-5.4-nano:
+      baseInput: 0.20
+      cacheRead: 0.02
+      output: 1.25
+    gpt-5.4-pro:
+      # Pro tier publishes no discounted cached-input rate; treat cache reads
+      # as full-price input rather than inventing a discount.
+      baseInput: 30.00
+      cacheRead: 30.00
+      output: 180.00
+    gpt-5.5:
+      baseInput: 5.00
+      cacheRead: 0.50
+      output: 30.00
+    gpt-5.5-pro:
+      baseInput: 30.00
+      cacheRead: 30.00
+      output: 180.00
+  # Used when turn_context.model isn't found above (new/renamed model).
+  # gpt-5.4 is the current mid-tier default Codex CLI model.
+  fallback:
+    baseInput: 2.50
+    cacheRead: 0.25
+    output: 15.00

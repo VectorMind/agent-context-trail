@@ -4,8 +4,13 @@
   "description": "See how one agent conversation's context evolves, prompt by prompt: tokens, cache reuse, and cost for Claude Code, Codex, and GitHub Copilot.",
   "version": "0.0.1",
   "publisher": "vectormind",
-  "private": true,
+  "private": false,
   "license": "MIT",
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#1E1B4B",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -20,11 +25,17 @@
     "tokens",
     "cost",
     "cache",
-    "context"
+    "context",
+    "ai",
+    "agent"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/VectorMind/agent-context-trail.git"
+  },
+  "homepage": "https://github.com/VectorMind/agent-context-trail#readme",
+  "bugs": {
+    "url": "https://github.com/VectorMind/agent-context-trail/issues"
   },
   "main": "./dist/extension.js",
   "activationEvents": [

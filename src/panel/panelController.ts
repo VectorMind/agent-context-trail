@@ -72,7 +72,7 @@ export class PanelController implements vscode.Disposable {
     const [claudeItems, codexItems]: [ConversationListItem[], ConversationListItem[]] = workspacePath
       ? await Promise.all([
           listClaudeConversations(workspacePath, this.pricing),
-          listCodexConversations(workspacePath)
+          listCodexConversations(workspacePath, this.pricing)
         ])
       : [[], []];
     const conversationsByProvider: Partial<Record<ProviderId, ConversationListItem[]>> = {
@@ -115,7 +115,7 @@ export class PanelController implements vscode.Disposable {
       const filePath = getCodexSessionFilePath(id);
       if (!filePath) return undefined;
 
-      const summary = await parseCodexSession(filePath, id);
+      const summary = await parseCodexSession(filePath, id, undefined, this.pricing);
       return {
         provider: 'codex',
         id,

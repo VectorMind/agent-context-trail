@@ -44,7 +44,7 @@ async function refresh(): Promise<void> {
 
 async function loadLatestSummary(workspacePath: string): Promise<ConversationSummary | undefined> {
   const claudeSession = findLatestClaudeSession(workspacePath);
-  const codexItems = await listCodexConversations(workspacePath);
+  const codexItems = await listCodexConversations(workspacePath, pricing);
 
   const candidates: Array<{ provider: ProviderId; lastAt: string; load: () => Promise<ConversationSummary | undefined> }> = [];
   if (claudeSession) {
@@ -74,12 +74,12 @@ async function listAndLoadCodexSummary(
   workspacePath: string,
   items?: ConversationListItem[]
 ): Promise<ConversationSummary | undefined> {
-  const codexItems = items ?? (await listCodexConversations(workspacePath));
+  const codexItems = items ?? (await listCodexConversations(workspacePath, pricing));
   const latest = codexItems[0];
   if (!latest) return undefined;
   const filePath = getCodexSessionFilePath(latest.id);
   if (!filePath) return undefined;
-  return parseCodexSession(filePath, latest.id);
+  return parseCodexSession(filePath, latest.id, undefined, pricing);
 }
 
 function showSummary(): void {
@@ -94,7 +94,7 @@ function showSummary(): void {
   const s = currentSummary;
   outputChannel.appendLine(`Conversation: ${s.title ?? '(untitled)'} (${s.provider})`);
   outputChannel.appendLine(`Workspace: ${s.workspacePath}`);
-  outputChannel.appendLine(`Requests: ${s.requests.length}`);
+  outputChannel.appendLine(`Prompts: ${s.requests.length}`);
   outputChannel.appendLine('');
 
   for (const r of s.requests) {

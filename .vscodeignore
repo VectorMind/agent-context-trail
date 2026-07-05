@@ -15,4 +15,7 @@ tsconfig.json
 esbuild.js
 WORKFLOW.md
 AGENTS.md
+DEVELOPMENT.md
+images/**
+icon*.svg
 *.vsix

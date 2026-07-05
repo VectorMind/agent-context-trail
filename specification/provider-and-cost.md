@@ -46,7 +46,8 @@ empty list indistinguishable from "no conversations found."
 - Cost is always expressed in **USD**. There is no alternate display unit.
 - Provider/account status signals such as Codex or Claude rate-limit
   consumption are not cost. They must be shown, when available, as separate
-  status fields rather than converted into USD or merged with USD cost.
+  status fields in addition to USD cost, never as a substitute for it and
+  never converted into or merged with USD cost.
 - Every cost figure carries a confidence label:
   - `provider-reported`: the provider's own log or response stated the cost.
   - `estimated`: computed from token counts against a maintained rate table,
@@ -57,3 +58,25 @@ empty list indistinguishable from "no conversations found."
 - Rate tables used for estimation must cite their official source and the date
   they were last checked.
 - Rates are maintained by hand, not auto-synced from any live pricing API.
+
+### Subscription-billed providers still get a BYOT cost estimate
+
+The purpose of this tool is to make real usage legible. Many providers (Codex,
+Copilot) bill through a subscription with opaque time- or request-based rate
+limits instead of metered per-token pricing, and that opacity is exactly what
+users need surfaced, not shrugged off as "unavailable."
+
+- A provider billing through a subscription or rate-limit plan is **not** a
+  reason to mark its cost `unavailable`. As long as local session data exposes
+  usable token counts (input, cached input, output, reasoning), compute an
+  `estimated` cost as if the same usage had been paid for as an API call at
+  that vendor's standard, publicly listed per-token rate ("bring your own
+  token" / BYOT equivalence). This is the same rate-table mechanism already
+  used for Claude; it is not provider-specific behavior.
+- `unavailable` is reserved for when no usable rate table entry (including a
+  fallback rate) exists for that vendor at all, not for "this provider's
+  billing model isn't per-token."
+- Rate-limit consumption (e.g. Codex's `used_percent` windows) stays a
+  separate status field precisely so both signals are visible together: the
+  literal dollar-equivalent cost of the tokens moved, and the plan-level
+  quota those tokens burned against.

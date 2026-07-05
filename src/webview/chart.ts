@@ -218,7 +218,7 @@ export function renderChart(
   if (requests.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'No requests in this conversation yet.';
+    empty.textContent = 'No prompts in this conversation yet.';
     container.appendChild(empty);
     return;
   }
@@ -267,7 +267,7 @@ export function renderChart(
     viewBox: `0 0 ${width} ${chartHeight}`,
     role: 'img',
     'aria-label':
-      'Token usage per request with cost per request below, sharing one request axis' +
+      'Token usage per prompt with cost per prompt below, sharing one prompt axis' +
       (timeline ? ', plus aligned model and wall-time lanes' : '')
   });
   scroll.appendChild(svg);
@@ -308,7 +308,7 @@ export function renderChart(
 
     const header = document.createElement('div');
     header.className = 'tooltip-header';
-    header.textContent = `Request #${index + 1}`;
+    header.textContent = `Prompt #${index + 1}`;
     if (request.model) {
       const model = document.createElement('span');
       model.className = 'tooltip-model';
@@ -374,7 +374,7 @@ export function renderChart(
     const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'button' });
     group.setAttribute(
       'aria-label',
-      `Request ${index + 1}: ` +
+      `Prompt ${index + 1}: ` +
         TOKEN_SERIES.map((s) => `${s.label} ${formatTokens(request.usage[s.key])}`).join(', ') +
         ` tokens, cost ${formatUsd(request.cost.usd)}. Press Enter for details.`
     );
@@ -612,7 +612,7 @@ export function renderChart(
   if (selectedIndex === undefined) {
     const hint = document.createElement('div');
     hint.className = 'chart-hint';
-    hint.textContent = 'Click a bar (or focus it and press Enter) to inspect that request.';
+    hint.textContent = 'Click a bar (or focus it and press Enter) to inspect that prompt.';
     container.appendChild(hint);
   }
 }
@@ -714,7 +714,7 @@ export function renderOverviewChart(
       tooltip.appendChild(tooltipRow(series.color, false, series.label, formatTokens(item.totalUsage[series.key])));
     }
     tooltip.appendChild(tooltipRow(undefined, false, 'Total', formatTokens(item.totalTokens)));
-    tooltip.appendChild(tooltipRow(undefined, false, 'Requests', String(item.requestCount)));
+    tooltip.appendChild(tooltipRow(undefined, false, 'Prompts', String(item.requestCount)));
     if (item.totalCostUsd !== undefined) {
       tooltip.appendChild(tooltipRow(COST_COLOR, true, 'Cost (estimated)', formatUsd(item.totalCostUsd)));
     }
@@ -744,7 +744,7 @@ export function renderOverviewChart(
     const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'button' });
     group.setAttribute(
       'aria-label',
-      `${item.title}: ${formatTokens(item.totalTokens)} tokens, ${item.requestCount} requests,` +
+      `${item.title}: ${formatTokens(item.totalTokens)} tokens, ${item.requestCount} prompts,` +
         ` ${item.totalCostUsd !== undefined ? `estimated ${formatUsd(item.totalCostUsd)}` : 'cost unavailable'}. Press Enter to open.`
     );
 

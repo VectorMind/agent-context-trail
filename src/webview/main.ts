@@ -48,19 +48,19 @@ type SectionId = 'chart' | 'table' | 'status' | 'thread' | 'request';
 type ToolSortKey = 'order' | 'name' | 'target' | 'in' | 'out' | 'time';
 
 const LAYOUTS: { id: LayoutId; label: string; hint: string }[] = [
-  { id: 'D', label: 'D · Enriched', hint: 'Stacked panels plus timeline lanes, cache breaks, and a deep request card' }
+  { id: 'D', label: 'D · Enriched', hint: 'Stacked panels plus timeline lanes, cache breaks, and a deep prompt card' }
 ];
 
 const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] = [
   { id: 'chart', title: 'Tokens per conversation', icon: '▦', hint: 'Token totals per conversation' },
   { id: 'table', title: 'Conversations', icon: '☰', hint: 'Sortable, filterable conversations table' },
-  { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, request by request' },
-  { id: 'request', title: 'Request detail', icon: '◎', hint: 'Selected request breakdown' }
+  { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
+  { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' }
 ];
 SECTIONS.splice(2, 0, {
   id: 'status',
   title: 'Current Status',
-  icon: 'â‰¡',
+  icon: '≡',
   hint: 'Provider limits and selected conversation context'
 });
 
@@ -158,9 +158,9 @@ function formatRelative(iso: string | undefined): string {
 
 function formatConversationTotal(detail: ConversationDetailPayload): string {
   const costText = detail.totalCost.usd !== undefined ? `total ${formatUsd(detail.totalCost.usd)}` : 'cost unavailable';
-  return `${detail.requests.length} request${detail.requests.length === 1 ? '' : 's'} Â· ${formatTokensCompact(
+  return `${detail.requests.length} prompt${detail.requests.length === 1 ? '' : 's'} · ${formatTokensCompact(
     tokenTotal(detail.totalUsage)
-  )} tokens Â· ${costText}`;
+  )} tokens · ${costText}`;
 }
 
 function formatContextPercent(fillPercent: number | undefined): string {
@@ -182,7 +182,7 @@ function statusSummaryText(status: CurrentStatusSnapshot | undefined): string {
   if (status.context?.contextFillPercent !== undefined) {
     parts.push(`ctx ${status.context.contextFillPercent.toFixed(1)}%`);
   }
-  return parts.length > 0 ? parts.join(' Â· ') : 'unavailable';
+  return parts.length > 0 ? parts.join(' · ') : 'unavailable';
 }
 
 // ---- sorting / filtering ----------------------------------------------------
@@ -193,7 +193,7 @@ const SORT_LABELS: Record<SortKey, string> = {
   title: 'title',
   firstAt: 'first message',
   lastAt: 'last message',
-  requestCount: 'requests',
+  requestCount: 'prompts',
   totalTokens: 'tokens',
   totalCostUsd: 'cost'
 };
@@ -415,7 +415,7 @@ function renderSidebarList(container: HTMLElement): void {
     const meta = document.createElement('div');
     meta.className = 'item-meta';
     meta.textContent =
-      `${item.requestCount} req · ${formatShortDate(item.firstAt)} → ${formatRelative(item.lastAt)}` +
+      `${item.requestCount} prompt${item.requestCount === 1 ? '' : 's'} · ${formatShortDate(item.firstAt)} → ${formatRelative(item.lastAt)}` +
       (item.pathLabel ? ` · ${item.pathLabel}` : '');
 
     row.append(title, meta);
@@ -488,7 +488,7 @@ function renderThreadHeader(container: HTMLElement): void {
   const meta = document.createElement('div');
   meta.className = 'thread-meta';
   meta.textContent = formatConversationTotal(detail);
-  meta.textContent = `${detail.requests.length} request${detail.requests.length === 1 ? '' : 's'} · ${formatTokensCompact(
+  meta.textContent = `${detail.requests.length} prompt${detail.requests.length === 1 ? '' : 's'} · ${formatTokensCompact(
     tokenTotal(detail.totalUsage)
   )} tokens · total ${formatUsd(detail.totalCost.usd)}`;
 
@@ -562,7 +562,7 @@ function renderCurrentStatusSection(container: HTMLElement): void {
       const bits = [`${label.toLowerCase()} ${window.usedPercent?.toFixed(1) ?? 'n/a'}%`];
       if (window.windowMinutes !== undefined) bits.push(`${window.windowMinutes} min`);
       if (window.resetsAt) bits.push(`resets ${formatExact(window.resetsAt)}`);
-      row.textContent = bits.join(' Â· ');
+      row.textContent = bits.join(' · ');
       body.appendChild(row);
     }
     block.appendChild(body);
@@ -599,7 +599,7 @@ function appendStatusRow(container: HTMLElement, label: string, value: string | 
   if (!value) return;
   const row = document.createElement('div');
   row.className = 'diag-row';
-  row.textContent = `${label} Â· ${value}`;
+  row.textContent = `${label} · ${value}`;
   container.appendChild(row);
 }
 
@@ -669,7 +669,7 @@ function renderDetailCard(container: HTMLElement): void {
   const header = document.createElement('div');
   header.className = 'detail-header';
   const title = document.createElement('h3');
-  title.textContent = `Request #${state.selectedRequestIndex + 1}`;
+  title.textContent = `Prompt #${state.selectedRequestIndex + 1}`;
   const cost = document.createElement('div');
   cost.className = 'detail-cost';
   cost.textContent = formatUsd(request.cost.usd);
@@ -937,7 +937,7 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
   const header = document.createElement('div');
   header.className = 'detail-header';
   const title = document.createElement('h3');
-  title.textContent = `Request #${state.selectedRequestIndex + 1}`;
+  title.textContent = `Prompt #${state.selectedRequestIndex + 1}`;
   const cost = document.createElement('div');
   cost.className = 'detail-cost';
   cost.textContent = formatUsd(request.cost.usd);
@@ -1162,7 +1162,7 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
 
 const TABLE_COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'title', label: 'Conversation' },
-  { key: 'requestCount', label: 'Requests', numeric: true },
+  { key: 'requestCount', label: 'Prompts', numeric: true },
   { key: 'firstAt', label: 'First message' },
   { key: 'lastAt', label: 'Last message' },
   { key: 'totalTokens', label: 'Tokens', numeric: true },
@@ -1275,7 +1275,7 @@ function sectionSummary(id: SectionId, items: ConversationListItem[]): string {
     if (state.loadingId && state.detail?.id !== state.loadingId) return 'loading…';
     const detail = state.detail;
     if (!detail) return 'none selected';
-    return `${detail.title ?? '(untitled)'} — ${detail.requests.length} req · ${formatTokensCompact(
+    return `${detail.title ?? '(untitled)'} — ${detail.requests.length} prompt${detail.requests.length === 1 ? '' : 's'} · ${formatTokensCompact(
       tokenTotal(detail.totalUsage)
     )} tokens · ${formatUsd(detail.totalCost.usd)}`;
   }
@@ -1317,7 +1317,7 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
       const pathFilter = document.createElement('input');
       pathFilter.type = 'search';
       pathFilter.className = 'filter-input';
-      pathFilter.placeholder = 'Filter by pathâ€¦';
+      pathFilter.placeholder = 'Filter by path…';
       pathFilter.value = state.pathFilter;
       pathFilter.setAttribute('aria-label', 'Filter conversations by path');
       pathFilter.addEventListener('input', () => {
@@ -1373,7 +1373,7 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
   if (!request) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'Click a bar in the conversation chart to inspect a request.';
+    empty.textContent = 'Click a bar in the conversation chart to inspect a prompt.';
     body.appendChild(empty);
     return;
   }

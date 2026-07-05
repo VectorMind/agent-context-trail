@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ConversationListItem } from '../../domain/types';
+import { PricingService } from '../../pricing/pricingService';
 import { scanCodexSessionMeta } from './parser';
 
 interface SessionIndexEntry {
@@ -21,6 +22,7 @@ interface CachedMeta {
   lastAt?: string;
   requestCount: number;
   totalUsage: ConversationListItem['totalUsage'];
+  totalCostUsd: number;
   workspacePath?: string;
 }
 
@@ -112,7 +114,7 @@ export function getCodexSessionFilePath(sessionId: string): string | undefined {
   return filePathBySessionId.get(sessionId);
 }
 
-export async function listCodexConversations(workspacePath: string): Promise<ConversationListItem[]> {
+export async function listCodexConversations(workspacePath: string, pricing: PricingService): Promise<ConversationListItem[]> {
   const sessions = walkRolloutFiles(codexSessionsRoot());
   const titles = readSessionIndex();
   const items: ConversationListItem[] = [];
@@ -124,7 +126,7 @@ export async function listCodexConversations(workspacePath: string): Promise<Con
     const meta =
       cached && cached.mtimeMs === session.mtimeMs
         ? cached.meta
-        : await scanCodexSessionMeta(session.filePath, titleFromIndex);
+        : await scanCodexSessionMeta(session.filePath, titleFromIndex, pricing);
     if (titleFromIndex && meta.title !== titleFromIndex) {
       meta.title = titleFromIndex;
     }
@@ -143,7 +145,7 @@ export async function listCodexConversations(workspacePath: string): Promise<Con
       totalUsage: meta.totalUsage,
       totalTokens:
         meta.totalUsage.inputTokens + meta.totalUsage.cacheReadTokens + meta.totalUsage.cacheCreationTokens + meta.totalUsage.outputTokens,
-      totalCostUsd: undefined,
+      totalCostUsd: meta.totalCostUsd,
       pathLabel: relativePathLabel(meta.workspacePath, workspacePath)
     };
     filePathBySessionId.set(session.sessionId, session.filePath);

@@ -11,6 +11,12 @@ interface ModelRate {
   output: number;
 }
 
+interface CodexModelRate {
+  baseInput: number;
+  cacheRead: number;
+  output: number;
+}
+
 interface PricingFile {
   schemaVersion: number;
   claude: {
@@ -18,6 +24,12 @@ interface PricingFile {
     retrieved: string;
     models: Record<string, ModelRate>;
     fallback: ModelRate;
+  };
+  codex: {
+    source: string;
+    retrieved: string;
+    models: Record<string, CodexModelRate>;
+    fallback: CodexModelRate;
   };
 }
 
@@ -48,6 +60,12 @@ export class PricingService {
     return fallback;
   }
 
+  private resolveCodexModel(model: string | undefined): CodexModelRate {
+    const { models, fallback } = this.load().codex;
+    if (!model) return fallback;
+    return models[model] ?? fallback;
+  }
+
   /**
    * Estimated cost only. Claude Code session logs do not report cost
    * directly, so every result from this method is labeled "estimated".
@@ -68,6 +86,25 @@ export class PricingService {
     const usd =
       usage.inputTokens * perToken(rate.baseInput) +
       cacheWriteCost +
+      usage.cacheReadTokens * perToken(rate.cacheRead) +
+      usage.outputTokens * perToken(rate.output);
+
+    return { usd, source: 'estimated' };
+  }
+
+  /**
+   * Estimated cost only. Codex is normally billed through a subscription /
+   * rate-limit plan, not metered per token, so this is a bring-your-own-token
+   * equivalent: what the same usage would cost at OpenAI's standard listed
+   * API rate. Reasoning tokens are already counted inside outputTokens by the
+   * Codex log (a breakdown, not an addition), so they are not billed twice.
+   */
+  estimateCodexCost(model: string | undefined, usage: UsageTokens): CostAmount {
+    const rate = this.resolveCodexModel(model);
+    const perToken = (rateUsdPerMTok: number) => rateUsdPerMTok / 1_000_000;
+
+    const usd =
+      usage.inputTokens * perToken(rate.baseInput) +
       usage.cacheReadTokens * perToken(rate.cacheRead) +
       usage.outputTokens * perToken(rate.output);
 

@@ -86,9 +86,12 @@ Map unavailable Claude-specific fields honestly:
 - cache read/write, cache-write TTL split, and cache-miss reasons are
   unavailable unless Codex logs equivalent cache fields in future samples;
 - subagent transcript attribution is unavailable unless Codex records a stable
-  delegated-agent transcript boundary;
-- USD cost is unavailable unless Codex starts reporting provider cost or a
-  defensible pricing source is added.
+  delegated-agent transcript boundary.
+
+USD cost is **not** in this unavailable list (see amendment below): Codex does
+not report cost directly, but that alone does not make it unavailable — a
+maintained OpenAI API rate table gives the same `estimated` confidence tier
+Claude uses.
 
 ## Codex-Native Scope
 
@@ -99,8 +102,9 @@ Add Codex-only value where the sampled logs expose it:
 - model context window when Codex reports it;
 - current context status as a current-status metric, including context fill and
   related capacity fields rather than a duplicate request composition chart;
-- rate-limit snapshots (`used_percent`, reset windows) as the honest
-  subscription/economics signal, distinct from USD cost.
+- rate-limit snapshots (`used_percent`, reset windows) as an additional
+  subscription/quota signal shown alongside estimated USD cost, not instead
+  of it.
 
 UI rules:
 
@@ -217,3 +221,27 @@ Reviewed `specification/product-scope.md`, `provider-and-cost.md`, and
   a panel surface that follows the selected conversation.
 - Resolved: `provider-and-cost.md` now explicitly prefers provider-specific
   depth over false symmetry and separates rate-limit consumption from USD cost.
+
+## Amendment: Codex Cost Is Estimated, Not Unavailable
+
+`SR-002`/`SR-005` above and the original Parity Scope both treated Codex USD
+cost as unavailable because Codex's local logs don't report cost directly.
+That reasoning conflated "not provider-reported" with "not knowable" — the
+same gap Claude cost estimation already closes with a maintained rate table.
+The maintainer corrected this: the product's purpose is to make real usage
+legible against opaque subscription rate limits, so a BYOT-equivalent dollar
+estimate belongs on Codex requests too, computed the same way Claude's is.
+
+- `specification/provider-and-cost.md` gained a "Subscription-billed providers
+  still get a BYOT cost estimate" section making this a durable rule: a
+  subscription/rate-limit billing model is not grounds for `unavailable`
+  cost as long as usable token counts exist.
+- `config/tokens-cost.yaml` gained a `codex` rate table (source:
+  `developers.openai.com/api/docs/pricing`, retrieved 2026-07-05) shaped like
+  the Claude table minus the cache-write tiers Codex doesn't have.
+- `PricingService.estimateCodexCost` mirrors `estimateClaudeCost`: per-token
+  rates against `inputTokens` / `cacheReadTokens` / `outputTokens`, `estimated`
+  confidence, resolved model → fallback rate.
+- Codex `PromptRequest.cost` and `ConversationSummary.totalCost` are now
+  `estimated` instead of `unavailable`; rate-limit `used_percent` remains a
+  separate status field shown alongside cost, not a replacement for it.

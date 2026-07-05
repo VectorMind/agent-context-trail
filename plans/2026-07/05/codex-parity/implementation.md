@@ -44,3 +44,34 @@ typecheck, build, and a real local Codex rollout parse.
 - Copilot remains unimplemented.
 - No live VS Code visual smoke pass was run in this turn; verification is
   compile/build plus direct parser proof against local Codex data.
+
+## Amendment 2026-07-05: Codex Cost Estimation, Encoding Fixes, "Prompt" Rename
+
+Maintainer-reported follow-up on the shipped Codex work, actioned same day:
+
+- Fixed literal encoding corruption in `src/webview/main.ts` (`icon: 'â‰¡'` →
+  `'≡'`, `'Filter by pathâ€¦'` → `'Filter by path…'`, five `'Â·'` → `'·'`
+  instances) — these rendered as garbled characters on the Current Status
+  section title and other summary rows.
+- Renamed the display label "Request" → "Prompt" throughout the panel and
+  charts (section titles, table column, tooltips, aria-labels, chart headers,
+  output-channel summary) to stop reading as a REST/API request. Internal
+  identifiers (`PromptRequest`, `requestCount`, `selectedRequestIndex`, etc.)
+  were left alone — this was a display-label rename, not a domain rename.
+- Reversed the "Codex cost is unavailable" decision (see plan.md amendment):
+  added a `codex` rate table to `config/tokens-cost.yaml`
+  (`developers.openai.com/api/docs/pricing`, retrieved 2026-07-05), added
+  `PricingService.estimateCodexCost`, and threaded a `PricingService` through
+  `scanCodexSessionMeta`, `parseCodexSession`, and `listCodexConversations`
+  (`src/providers/codex/parser.ts`, `discover.ts`, `src/extension.ts`,
+  `src/panel/panelController.ts`). Codex `PromptRequest.cost` and
+  `ConversationSummary.totalCost` are now `estimated` instead of
+  `unavailable`.
+- `src/status/statusBar.ts`: the compact status-bar text no longer collapses
+  to `n/a | n/a` when cost is unavailable for a request/model the rate table
+  truly can't resolve — it falls back to rate-limit `used_percent`, then a
+  plain prompt count. The tooltip gained a rate-limit line
+  (`appendRateLimits`) and only shows the "does not report per-token cost"
+  note when cost is genuinely absent. In practice this fallback path is now
+  rarely hit for Codex since `estimateCodexCost` always resolves a rate
+  (including its own fallback entry).
