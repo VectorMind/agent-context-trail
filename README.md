@@ -6,7 +6,7 @@ cache reuse, and cost — for Claude Code, Codex, and GitHub Copilot.
 </p>
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/VectorMind/agent-context-trail/main/images/panel-screenshot.png" alt="Agent Context Trail panel: per-conversation token bars, conversations table, per-request token/cost chart, and request detail card" width="100%"/>
+<img src="https://raw.githubusercontent.com/VectorMind/agent-context-trail/main/images/screenshot.png" alt="Agent Context Trail panel: per-conversation token bars, conversations table, per-request token/cost chart, and request detail card" width="100%"/>
 </p>
 
 Your coding agent reads far more than you type. Every prompt re-sends the
