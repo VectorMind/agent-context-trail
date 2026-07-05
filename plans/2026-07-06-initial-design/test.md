@@ -1,7 +1,8 @@
-# Test Proof — Phase 1
+# Test Proof — Phase 1 & 2
 
 Packet: `plans/2026-07-06-initial-design`. Proof for
-[implementation.md](implementation.md).
+[implementation.md](implementation.md). Phase 2 proof is appended after the
+Phase 1 section below.
 
 ## Commands run
 
@@ -94,12 +95,11 @@ TOTAL in=41378 cacheRead=13384143 cacheWrite=648726 out=161932 cost=$16.8411 (16
 
 ## Known gaps
 
-- No visual confirmation of the actual status bar item / tooltip rendering
-  inside a running VS Code window (this environment has no way to drive or
-  screenshot the VS Code UI). The maintainer should reload the window
-  (`Developer: Reload Window`) after `npm run reinstall` and confirm the
-  status bar text, tooltip toggle link, and `Show details` output-channel
-  command visually.
+- ~~No visual confirmation of the status bar/tooltip.~~ **Resolved**: the
+  maintainer reloaded the window and confirmed the status bar
+  (`$0.11 | $20.05`), tooltip (last call / conversation total / toggle
+  link), and output-channel detail dump all render exactly as designed, on
+  the real session.
 - No automated test suite yet (no test framework wired up). Phase 1
   verification relied on running the real parser against a real session,
   which is stronger evidence than a mocked unit test but is manual and not
@@ -114,3 +114,95 @@ TOTAL in=41378 cacheRead=13384143 cacheWrite=648726 out=161932 cost=$16.8411 (16
 - Verified against the maintainer's real `~/.claude/projects/` data on this
   machine; paths and slugs will differ on other machines but the matching
   logic is designed to be portable (see implementation.md).
+
+# Test Proof — Phase 2
+
+Proof for the "Implementation Log — Phase 2" section of
+[implementation.md](implementation.md).
+
+## Commands run
+
+```powershell
+npm run typecheck    # tsc --noEmit -> clean, including src/webview (DOM lib)
+npm run build         # esbuild -> dist/extension.js (127 KB) + dist/webview.js (10.4 KB)
+npx vsce package --no-dependencies -o agent-context-trail.vsix
+code --install-extension agent-context-trail.vsix --force
+```
+
+`vsce package` output — confirms both bundles ship and nothing else leaks in:
+
+```text
+extension/
+├─ LICENSE.txt [1.04 KB]
+├─ package.json [2.34 KB]
+├─ readme.md [2.02 KB]
+├─ config/tokens-cost.yaml [2.67 KB]
+└─ dist/
+   ├─ extension.js [124.36 KB]
+   └─ webview.js [10.4 KB]
+Packaged: agent-context-trail.vsix (8 files, 35.77 KB)
+```
+
+## Logic verification against real data (pre-package)
+
+Same rationale as Phase 1: this environment has no way to drive the actual
+webview UI, so before packaging, the new host-side data functions
+(`listClaudeConversations`, `getClaudeSessionFilePath`) were exercised
+directly via a disposable bundled script (`.tmp/verify-panel-data.ts`, run
+with `node`, then deleted) against this repository's real, live Claude Code
+session — the same one the Phase 1 proof used, now grown to 11 requests.
+
+### Expected
+
+- `listClaudeConversations` returns one item for this workspace, with a
+  title matching the `ai-title` record.
+- `getClaudeSessionFilePath` resolves that item's id back to the exact
+  session file on disk.
+- Parsing that resolved path produces a title identical to the list's title
+  (list and detail must agree — they're derived from the same file by two
+  different code paths).
+
+### Actual
+
+```text
+conversations found: 1
+- 1175018a-a8f2-498b-85d7-7265542ba0df  updatedAt=2026-07-04T19:06:29.382Z  title="Design VS Code extension for API usage analytics"
+
+resolved file path for first item: C:\Users\wassi\.claude\projects\C--dev-VectorMind-agent-context-trail\1175018a-a8f2-498b-85d7-7265542ba0df.jsonl
+detail.title matches list title: true
+detail.requests.length: 11
+detail.totalCost: { usd: 24.723301000000003, source: 'estimated' }
+```
+
+### Assessment
+
+- List/detail agreement: **pass** — `peekClaudeSessionTitle` (cheap,
+  title-only scan) and `parseClaudeSession` (full parse) agree exactly on
+  the title, confirming the two-tier read strategy (list = cheap, detail =
+  full) doesn't drift.
+- Id → file path resolution: **pass** — `getClaudeSessionFilePath`
+  reconstructed the path purely from `<projectDir>/<id>.jsonl` and it
+  existed and parsed correctly.
+- Cost total grew from $16.84 (Phase 1 proof, 7 requests) to $24.72 (11
+  requests) between the two verification runs — consistent with this same
+  conversation continuing to accumulate real usage during Phase 2's own
+  development.
+
+## Known gaps (Phase 2)
+
+- No visual confirmation of the panel UI itself (tabs, list, chart
+  rendering, click-to-select, collapse toggle) — same environment
+  limitation as Phase 1. The maintainer should run
+  **Developer: Reload Window**, click the status bar item (or run
+  `Agent Context Trail: Open Conversation Panel`), and confirm: the Claude
+  tab shows this conversation, the chart renders 11 bars with a visible
+  cost line, clicking a bar shows the detail card, and the collapse toggle
+  hides/shows the list pane.
+- Codex and Copilot tabs are only exercised in the "empty state" path
+  (`conversationsByProvider.codex/copilot === []`) — not a real gap, since
+  those providers aren't implemented, but worth confirming the "support is
+  not implemented yet" message actually renders instead of a silently
+  empty list.
+- No automated test for the webview's message-handshake (`ready` → `init`)
+  timing; verified only by code review of the race described in
+  implementation.md, not by a running test.

@@ -11,7 +11,7 @@ export class StatusBarController implements vscode.Disposable {
   constructor(private readonly pricing: PricingService) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.item.name = 'Agent Context Trail';
-    this.item.command = 'agentContextTrail.showSummary';
+    this.item.command = 'agentContextTrail.openPanel';
   }
 
   dispose(): void {
@@ -68,7 +68,7 @@ export class StatusBarController implements vscode.Disposable {
     md.appendMarkdown(`_Cost is ${s.totalCost.source}; token detail is in the summary view._\n\n`);
     md.appendMarkdown('---\n\n');
     md.appendMarkdown(`[Switch to ${otherLabel}](command:agentContextTrail.setCostUnit?${toggleArg}) · `);
-    md.appendMarkdown(`[Show details](command:agentContextTrail.showSummary)`);
+    md.appendMarkdown(`[Open panel](command:agentContextTrail.openPanel)`);
     return md;
   }
 }

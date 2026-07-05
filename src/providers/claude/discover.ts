@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { ConversationListItem } from '../../domain/types';
+import { peekClaudeSessionTitle } from './parser';
 
 export function claudeProjectsRoot(): string {
   return path.join(os.homedir(), '.claude', 'projects');
@@ -113,4 +115,34 @@ export function findLatestClaudeSession(workspacePath: string): ClaudeSessionFil
   const projectDir = findClaudeProjectDir(workspacePath);
   if (!projectDir) return undefined;
   return listClaudeSessions(projectDir)[0];
+}
+
+export function getClaudeSessionFilePath(workspacePath: string, sessionId: string): string | undefined {
+  const projectDir = findClaudeProjectDir(workspacePath);
+  if (!projectDir) return undefined;
+  const filePath = path.join(projectDir, `${sessionId}.jsonl`);
+  return fs.existsSync(filePath) ? filePath : undefined;
+}
+
+/**
+ * Conversation list for the panel's sidebar: titles + recency only, sorted
+ * most-recently-updated first. Deliberately does not compute token/cost
+ * totals (parseClaudeSession does that) since listing many sessions should
+ * stay cheap.
+ */
+export async function listClaudeConversations(workspacePath: string): Promise<ConversationListItem[]> {
+  const projectDir = findClaudeProjectDir(workspacePath);
+  if (!projectDir) return [];
+
+  const sessions = listClaudeSessions(projectDir);
+  const items: ConversationListItem[] = [];
+  for (const session of sessions) {
+    const title = await peekClaudeSessionTitle(session.filePath);
+    items.push({
+      id: session.sessionId,
+      title: title ?? '(untitled)',
+      updatedAt: new Date(session.mtimeMs).toISOString()
+    });
+  }
+  return items;
 }

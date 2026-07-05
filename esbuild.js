@@ -4,8 +4,8 @@ const path = require('path');
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
-async function main() {
-  const ctx = await esbuild.context({
+function buildHost() {
+  return esbuild.context({
     entryPoints: [path.join(__dirname, 'src', 'extension.ts')],
     bundle: true,
     outfile: path.join(__dirname, 'dist', 'extension.js'),
@@ -17,12 +17,30 @@ async function main() {
     minify: production,
     logLevel: 'info'
   });
+}
+
+function buildWebview() {
+  return esbuild.context({
+    entryPoints: [path.join(__dirname, 'src', 'webview', 'main.ts')],
+    bundle: true,
+    outfile: path.join(__dirname, 'dist', 'webview.js'),
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2020',
+    sourcemap: !production,
+    minify: production,
+    logLevel: 'info'
+  });
+}
+
+async function main() {
+  const contexts = await Promise.all([buildHost(), buildWebview()]);
 
   if (watch) {
-    await ctx.watch();
+    await Promise.all(contexts.map((ctx) => ctx.watch()));
   } else {
-    await ctx.rebuild();
-    await ctx.dispose();
+    await Promise.all(contexts.map((ctx) => ctx.rebuild()));
+    await Promise.all(contexts.map((ctx) => ctx.dispose()));
   }
 }
 

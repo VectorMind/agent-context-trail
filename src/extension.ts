@@ -4,11 +4,13 @@ import { findLatestClaudeSession } from './providers/claude/discover';
 import { parseClaudeSession } from './providers/claude/parser';
 import { PricingService } from './pricing/pricingService';
 import { CostUnit, StatusBarController } from './status/statusBar';
+import { PanelController } from './panel/panelController';
 
 const REFRESH_INTERVAL_MS = 15_000;
 
 let outputChannel: vscode.OutputChannel;
 let statusBar: StatusBarController;
+let panelController: PanelController;
 let pricing: PricingService;
 let currentSummary: ConversationSummary | undefined;
 
@@ -78,12 +80,14 @@ export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('Agent Context Trail');
   pricing = new PricingService(context.extensionPath);
   statusBar = new StatusBarController(pricing);
+  panelController = new PanelController(context, pricing);
 
-  context.subscriptions.push(outputChannel, statusBar);
+  context.subscriptions.push(outputChannel, statusBar, panelController);
 
   context.subscriptions.push(
     vscode.commands.registerCommand('agentContextTrail.refresh', () => refresh()),
     vscode.commands.registerCommand('agentContextTrail.showSummary', () => showSummary()),
+    vscode.commands.registerCommand('agentContextTrail.openPanel', () => panelController.reveal(getWorkspacePath())),
     vscode.commands.registerCommand('agentContextTrail.setCostUnit', async (unit: CostUnit) => {
       await vscode.workspace
         .getConfiguration('agentContextTrail')

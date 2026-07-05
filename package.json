@@ -38,7 +38,11 @@
       },
       {
         "command": "agentContextTrail.showSummary",
-        "title": "Agent Context Trail: Show Conversation Summary"
+        "title": "Agent Context Trail: Show Conversation Summary (Text)"
+      },
+      {
+        "command": "agentContextTrail.openPanel",
+        "title": "Agent Context Trail: Open Conversation Panel"
       },
       {
         "command": "agentContextTrail.setCostUnit",

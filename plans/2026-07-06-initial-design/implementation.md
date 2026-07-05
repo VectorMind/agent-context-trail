@@ -1,6 +1,7 @@
-[######] Phase 1 done — Claude Code data + status bar implemented and
-validated against a real session; ready to reload/test in a running VS Code
-window. Follow-ups noted below.
+[######] Phase 1 & 2 done — Claude Code data + status bar + webview panel
+(conversation list, SVG chart, request detail) implemented and validated
+against real sessions; ready to reload/test in a running VS Code window.
+Follow-ups noted below. See "Phase 2" section further down for the panel.
 
 # Implementation Log — Phase 1
 
@@ -125,3 +126,136 @@ None. DD-001..DD-005 and OP-001..OP-006 are implemented as decided.
 - Multi-root workspaces are not handled — `getWorkspacePath()` takes
   `workspaceFolders[0]` only. Acceptable for Phase 1; the panel's
   conversation list will need real multi-root awareness in Phase 2.
+
+# Implementation Log — Phase 2
+
+Implements Phase 2 of [plan.md](plan.md) §6: the WebviewPanel, conversation
+list with provider tabs, SVG thread chart, and request-detail card. DD-002
+(plain SVG) and DD-003 (WebviewPanel, editor tab) implemented as decided.
+
+## Files added
+
+```text
+src/panel/protocol.ts          host<->webview message types (shared, no runtime deps)
+src/panel/panelController.ts   creates/reveals the WebviewPanel, owns the message loop,
+                                 loads Claude conversation lists/details on demand
+src/webview/chart.ts           hand-rolled SVG stacked-bar + cost-line chart (DD-002)
+src/webview/main.ts            webview app shell: tabs, list, header, chart, detail card
+```
+
+## Files changed
+
+- `src/domain/types.ts` — added `ConversationListItem`.
+- `src/providers/claude/parser.ts` — added `peekClaudeSessionTitle` (title-only
+  scan, no usage computation, for cheap list building) and exported
+  `extractPromptPreview` support for its first-user-prompt fallback.
+- `src/providers/claude/discover.ts` — added `getClaudeSessionFilePath`
+  (resolve a session id back to its file, for on-demand detail loading) and
+  `listClaudeConversations` (title + recency list for the sidebar).
+- `src/status/statusBar.ts` — click target and tooltip's "Open panel" link
+  now point at `agentContextTrail.openPanel` instead of `showSummary`.
+- `src/extension.ts` — instantiates `PanelController`, registers
+  `agentContextTrail.openPanel`.
+- `package.json` — added the `openPanel` command; `showSummary`'s title
+  clarified to "(Text)" since it's now the secondary, output-channel path.
+- `esbuild.js` — now builds two entry points (`extension.ts` → `dist/
+  extension.js`, node/cjs; `webview/main.ts` → `dist/webview.js`,
+  browser/iife) instead of one.
+- `tsconfig.json` — added `"DOM"` to `lib` so the webview code typechecks
+  alongside the Node host code in one `tsc --noEmit` pass.
+
+## Implementation facts
+
+### Webview architecture
+
+`PanelController` owns a single `WebviewPanel` (created lazily on first
+`agentContextTrail.openPanel`, reused via `.reveal()` afterward). The host
+never renders HTML for data — it only ever sends typed messages
+(`HostToWebviewMessage`/`WebviewToHostMessage` in `protocol.ts`); the webview
+(`main.ts`) owns all DOM rendering. This keeps the parsing/pricing code
+(`src/providers`, `src/pricing`) entirely on the host side, untouched by
+Phase 2, and the webview bundle free of any `vscode` or Node dependency.
+
+A `ready`/`init` handshake avoids the message-loss race where the host
+might `postMessage` before the webview's listener is attached: the webview
+posts `{ type: 'ready' }` on load; only on receiving that does the host send
+`{ type: 'init', ... }` with the full conversation list and the
+most-recently-updated conversation's detail preloaded. Re-opening an
+already-open panel (`reveal()` called again) skips recreating the webview
+and just re-sends `init` if the handshake already completed.
+
+### List vs. detail cost
+
+Building the sidebar list (`listClaudeConversations`) only scans each
+session file for its title (`peekClaudeSessionTitle`) — it does not compute
+token/cost totals, unlike `parseClaudeSession`. Full detail (`requests[]`
+with usage/cost) is only parsed for the one conversation currently selected,
+fetched on demand via a `selectConversation` message. This mirrors the
+plan's "titles only" list requirement (plan §3) and avoids parsing every
+session in a project just to populate a list.
+
+### Chart
+
+`chart.ts` builds raw SVG via `document.createElementNS` — no chart
+library, per DD-002. Each request is a stacked bar (cache read → cache
+write → fresh input → output, bottom to top) scaled to the conversation's
+own max token total, plus a cost polyline scaled to the conversation's own
+max cost, drawn with `pointer-events: none` so it never blocks bar clicks. A
+transparent full-height rect per bar column is the actual click target, so
+short/near-empty bars (e.g. the local-slash-command zero-usage requests
+noted in the Phase 1 follow-ups) are still easy to select. Colors reference
+`--vscode-charts-*` variables so light/dark/high-contrast theming is
+automatic, with no extra code.
+
+### List, tabs, detail card
+
+Plain DOM manipulation in `main.ts` (`document.createElement`, full
+re-render into `#app` on every state change) — no framework. At this UI
+size (a tab bar, a list, a chart, a key/value detail grid) a full re-render
+per state change is simpler to reason about than incremental diffing, and
+is cheap enough that it isn't worth Preact yet (plan §4 DD-001 left this
+door open only "if templating gets noisy" — it isn't).
+
+Copilot and Codex tabs render with an explicit "support is not implemented
+yet" empty state rather than an empty list with no explanation, consistent
+with the "unavailable, never silently empty/zero" principle from the survey
+and handoff.
+
+## Decisions taken during execution
+
+- Cost-unit toggle (AIC ↔ $) was **not** duplicated inside the panel. The
+  panel always shows both `$X.XXXX (Y.YY AIC)` together (same pattern as the
+  Phase 1 output-channel dump), since plan §3 only specifies the status
+  bar's AIC/$ toggle; the panel's job is showing token detail, which the
+  status bar deliberately never does.
+- `getClaudeSessionFilePath` reconstructs the session's file path from
+  `<projectDir>/<sessionId>.jsonl` rather than re-scanning
+  `listClaudeSessions` — the id-to-filename mapping is already exact and
+  stable (see `parser.ts`'s use of the filename stem as `sessionId`).
+
+## Deviations from plan.md
+
+None. The panel matches the layout sketched in plan §3 (collapsible list,
+provider tabs, chart, detail-on-click), modulo the specific visual styling,
+which plan.md left unspecified.
+
+## Follow-up risks / notes for Phase 3+
+
+- No live update: opening the panel loads data once; switching conversations
+  re-fetches, but the currently-displayed conversation does not refresh if
+  the underlying session file changes while the panel is open. Phase 5's
+  file-watching (plan §6) should drive both the status bar and an open
+  panel.
+- The chart has no y-axis scale/gridlines and no legend for the four segment
+  colors — acceptable for a first cut given hover tooltips (native SVG
+  `<title>`) explain each bar, but a legend is a likely near-term polish
+  item once Codex data (different token shape) starts appearing in the same
+  chart.
+- Multi-root workspaces still use `workspaceFolders[0]` only (carried over
+  from Phase 1's note); the panel does not yet let a user switch which
+  workspace/root it's showing.
+- The zero-usage synthetic requests (Phase 1's local-slash-command finding)
+  now show up as near-invisible slivers in the chart; the transparent
+  full-height hit-target rect makes them still clickable, but a future pass
+  may want to filter or visually flag them rather than let them look like
+  empty bars.

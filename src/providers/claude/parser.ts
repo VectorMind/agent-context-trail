@@ -65,6 +65,53 @@ function usageFromRecord(record: RawRecord): UsageTokens {
   };
 }
 
+function extractPromptPreview(record: RawRecord, maxLen = 80): string | undefined {
+  const content = record.message?.content;
+  const text =
+    typeof content === 'string' ? content : Array.isArray(content) ? content.find((b) => b?.type === 'text')?.text : undefined;
+  const trimmed = text?.trim();
+  return trimmed ? trimmed.slice(0, maxLen) : undefined;
+}
+
+/**
+ * Lightweight scan for a session's display title, without computing usage.
+ * Used to build the conversation list, where reading every request's token
+ * detail for every session would be wasted work. Prefers the last `ai-title`
+ * record (Claude Code can retitle a conversation as it progresses); falls
+ * back to a preview of the first real user prompt when no title was ever
+ * generated.
+ */
+export async function peekClaudeSessionTitle(filePath: string): Promise<string | undefined> {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity
+  });
+
+  let title: string | undefined;
+  let firstPromptPreview: string | undefined;
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let record: RawRecord;
+    try {
+      record = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    if (record.type === 'ai-title' && typeof record.aiTitle === 'string') {
+      title = record.aiTitle;
+      continue;
+    }
+    if (!firstPromptPreview && isRealUserPrompt(record)) {
+      firstPromptPreview = extractPromptPreview(record);
+    }
+  }
+
+  return title ?? firstPromptPreview;
+}
+
 /**
  * Groups a Claude Code session JSONL file into prompt-iteration requests.
  * A new request starts at each real user prompt (a `user` record carrying

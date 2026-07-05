@@ -28,6 +28,12 @@ export interface PromptRequest {
   toolCallCount: number;
 }
 
+export interface ConversationListItem {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
 export interface ConversationSummary {
   id: string;
   provider: ProviderId;
