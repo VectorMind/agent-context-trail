@@ -15,14 +15,17 @@ This repository separates durable requirements from time-bounded work packets.
   it or a stable contract has clearly emerged.
 - Write durable requirements directly under `specification/<concern>.md`;
   the whole folder is already scoped to Agent Context Trail.
-- Track active work in dated packets under `plans/YYYY-MM-DD-<slug>/`.
+- Track active work in dated packets under `plans/YYYY-MM/DD/<change-id>/`.
+- Keep `plans/README.md` as the layout note, `plans/open.md` for active work, and `plans/closed.md` for completed packets.
 - Start each packet with `plan.md` and keep `test.md` as the proof surface.
 - Create `implementation.md` only after implementation work has actually
   happened.
 - Add `survey.md` only when the maintainer explicitly requests a survey.
 - When a plan is agreed and when it is validated, assess relevant
-  `specification/*.md` files for possible violations and candidate durable
-  topics; suggest any candidate additions to the maintainer for review.
+  `specification/*.md` files for planned behavior that may need durable
+  contract changes, clarifications, or explicit exceptions. Record those as
+  open specification-review points rather than overstating them as failures;
+  suggest any candidate additions to the maintainer for review.
 - When work changes direction, update the packet so `plan.md`,
   `implementation.md`, and `test.md` still describe the same reality.
 

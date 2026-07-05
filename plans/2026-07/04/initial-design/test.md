@@ -1,6 +1,6 @@
-# Test Proof — Phase 1 & 2
+﻿# Test Proof â€” Phase 1 & 2
 
-Packet: `plans/2026-07-06-initial-design`. Proof for
+Packet: `plans/2026-07/06/initial-design`. Proof for
 [implementation.md](implementation.md). Phase 2 proof, and a later
 "drop the AIC unit" change, are appended after the Phase 1 section below.
 
@@ -14,22 +14,22 @@ npx vsce package --no-dependencies -o agent-context-trail.vsix
 code --install-extension agent-context-trail.vsix --force
 ```
 
-`vsce package` output (files actually shipped in the VSIX — confirms
+`vsce package` output (files actually shipped in the VSIX â€” confirms
 `.vscodeignore` correctly excludes `plans/`, `specification/`, `.agents/`,
 `src/`, and source maps while keeping the pricing config):
 
 ```text
 extension/
-├─ LICENSE.txt [1.04 KB]
-├─ package.json [2.2 KB]
-├─ readme.md [2.02 KB]
-├─ dist/extension.js [116.59 KB]
-└─ pricing/pricing.yaml [2.67 KB]
+â”œâ”€ LICENSE.txt [1.04 KB]
+â”œâ”€ package.json [2.2 KB]
+â”œâ”€ readme.md [2.02 KB]
+â”œâ”€ dist/extension.js [116.59 KB]
+â””â”€ pricing/pricing.yaml [2.67 KB]
 Packaged: agent-context-trail.vsix (7 files, 30.6 KB)
 ```
 
 (`pricing/pricing.yaml` was renamed to `config/tokens-cost.yaml` after this
-run — see implementation.md. Re-packaging now ships `config/tokens-cost.yaml`
+run â€” see implementation.md. Re-packaging now ships `config/tokens-cost.yaml`
 at the same size instead.)
 
 `code --install-extension` reported success (one unrelated Node
@@ -42,7 +42,7 @@ The extension host code can't run outside VS Code, and there's no way to
 visually inspect the installed status bar from this environment, so the
 provider/parser/pricing modules (none of which import `vscode`) were
 exercised directly: a disposable script (`.tmp/verify-claude.ts`, bundled
-with esbuild, run with `node`, then deleted — per `WORKFLOW.md`, `.tmp/` is
+with esbuild, run with `node`, then deleted â€” per `WORKFLOW.md`, `.tmp/` is
 for disposable artifacts) called `findClaudeProjectDir`,
 `listClaudeSessions`, and `parseClaudeSession` against this repository's own
 live Claude Code session file for this exact workspace.
@@ -79,17 +79,17 @@ TOTAL in=41378 cacheRead=13384143 cacheWrite=648726 out=161932 cost=$16.8411 (16
 
 - Discovery: **pass**, slug fast path matched on the first try.
 - Title: **pass**, matches the `ai-title` record verbatim.
-- Grouping: **pass with an explained edge case** — requests #1, #2, #5, #6
+- Grouping: **pass with an explained edge case** â€” requests #1, #2, #5, #6
   are local slash-commands (e.g. `/model claude-fable-5[1m]`), which
   genuinely carry no model usage. This is correct per Claude Code's own
   behavior (local commands are handled by the CLI, not sent to the model),
   not a parser defect. Documented as a Phase 2 UX question in
   implementation.md, not a bug.
-- Model switch mid-session: **pass** — request #3/#4 correctly show
+- Model switch mid-session: **pass** â€” request #3/#4 correctly show
   `claude-fable-5`, request #7 correctly shows `claude-sonnet-5` after the
   in-session `/model` switch, confirming per-request model attribution
   (not a single session-wide model) works.
-- Cost magnitude: **plausible** — $16.84 total for a long, tool-call-heavy
+- Cost magnitude: **plausible** â€” $16.84 total for a long, tool-call-heavy
   design session with ~13.4M cumulative cache-read tokens is consistent
   with the size of this actual conversation.
 
@@ -105,7 +105,7 @@ TOTAL in=41378 cacheRead=13384143 cacheWrite=648726 out=161932 cost=$16.8411 (16
   which is stronger evidence than a mocked unit test but is manual and not
   repeatable in CI. Consider adding a small fixture-based test harness once
   Phase 2's panel needs regression protection.
-- Codex and Copilot paths are entirely unimplemented (by design — Phase 3/4).
+- Codex and Copilot paths are entirely unimplemented (by design â€” Phase 3/4).
 
 ## Environment notes
 
@@ -115,9 +115,9 @@ TOTAL in=41378 cacheRead=13384143 cacheWrite=648726 out=161932 cost=$16.8411 (16
   machine; paths and slugs will differ on other machines but the matching
   logic is designed to be portable (see implementation.md).
 
-# Test Proof — Phase 2
+# Test Proof â€” Phase 2
 
-Proof for the "Implementation Log — Phase 2" section of
+Proof for the "Implementation Log â€” Phase 2" section of
 [implementation.md](implementation.md).
 
 ## Commands run
@@ -129,17 +129,17 @@ npx vsce package --no-dependencies -o agent-context-trail.vsix
 code --install-extension agent-context-trail.vsix --force
 ```
 
-`vsce package` output — confirms both bundles ship and nothing else leaks in:
+`vsce package` output â€” confirms both bundles ship and nothing else leaks in:
 
 ```text
 extension/
-├─ LICENSE.txt [1.04 KB]
-├─ package.json [2.34 KB]
-├─ readme.md [2.02 KB]
-├─ config/tokens-cost.yaml [2.67 KB]
-└─ dist/
-   ├─ extension.js [124.36 KB]
-   └─ webview.js [10.4 KB]
+â”œâ”€ LICENSE.txt [1.04 KB]
+â”œâ”€ package.json [2.34 KB]
+â”œâ”€ readme.md [2.02 KB]
+â”œâ”€ config/tokens-cost.yaml [2.67 KB]
+â””â”€ dist/
+   â”œâ”€ extension.js [124.36 KB]
+   â””â”€ webview.js [10.4 KB]
 Packaged: agent-context-trail.vsix (8 files, 35.77 KB)
 ```
 
@@ -150,7 +150,7 @@ webview UI, so before packaging, the new host-side data functions
 (`listClaudeConversations`, `getClaudeSessionFilePath`) were exercised
 directly via a disposable bundled script (`.tmp/verify-panel-data.ts`, run
 with `node`, then deleted) against this repository's real, live Claude Code
-session — the same one the Phase 1 proof used, now grown to 11 requests.
+session â€” the same one the Phase 1 proof used, now grown to 11 requests.
 
 ### Expected
 
@@ -159,7 +159,7 @@ session — the same one the Phase 1 proof used, now grown to 11 requests.
 - `getClaudeSessionFilePath` resolves that item's id back to the exact
   session file on disk.
 - Parsing that resolved path produces a title identical to the list's title
-  (list and detail must agree — they're derived from the same file by two
+  (list and detail must agree â€” they're derived from the same file by two
   different code paths).
 
 ### Actual
@@ -176,22 +176,22 @@ detail.totalCost: { usd: 24.723301000000003, source: 'estimated' }
 
 ### Assessment
 
-- List/detail agreement: **pass** — `peekClaudeSessionTitle` (cheap,
+- List/detail agreement: **pass** â€” `peekClaudeSessionTitle` (cheap,
   title-only scan) and `parseClaudeSession` (full parse) agree exactly on
   the title, confirming the two-tier read strategy (list = cheap, detail =
   full) doesn't drift.
-- Id → file path resolution: **pass** — `getClaudeSessionFilePath`
+- Id â†’ file path resolution: **pass** â€” `getClaudeSessionFilePath`
   reconstructed the path purely from `<projectDir>/<id>.jsonl` and it
   existed and parsed correctly.
 - Cost total grew from $16.84 (Phase 1 proof, 7 requests) to $24.72 (11
-  requests) between the two verification runs — consistent with this same
+  requests) between the two verification runs â€” consistent with this same
   conversation continuing to accumulate real usage during Phase 2's own
   development.
 
 ## Known gaps (Phase 2)
 
 - No visual confirmation of the panel UI itself (tabs, list, chart
-  rendering, click-to-select, collapse toggle) — same environment
+  rendering, click-to-select, collapse toggle) â€” same environment
   limitation as Phase 1. The maintainer should run
   **Developer: Reload Window**, click the status bar item (or run
   `Agent Context Trail: Open Conversation Panel`), and confirm: the Claude
@@ -199,15 +199,15 @@ detail.totalCost: { usd: 24.723301000000003, source: 'estimated' }
   cost line, clicking a bar shows the detail card, and the collapse toggle
   hides/shows the list pane.
 - Codex and Copilot tabs are only exercised in the "empty state" path
-  (`conversationsByProvider.codex/copilot === []`) — not a real gap, since
+  (`conversationsByProvider.codex/copilot === []`) â€” not a real gap, since
   those providers aren't implemented, but worth confirming the "support is
   not implemented yet" message actually renders instead of a silently
   empty list.
-- No automated test for the webview's message-handshake (`ready` → `init`)
+- No automated test for the webview's message-handshake (`ready` â†’ `init`)
   timing; verified only by code review of the race described in
   implementation.md, not by a running test.
 
-# Test Proof — Post-Phase-2 change: drop the AIC unit
+# Test Proof â€” Post-Phase-2 change: drop the AIC unit
 
 Proof for the "Post-Phase-2 change" section of implementation.md.
 
@@ -220,18 +220,18 @@ npx vsce package --no-dependencies -o agent-context-trail.vsix
 code --install-extension agent-context-trail.vsix --force
 ```
 
-`vsce package` output — same file set as the Phase 2 proof, confirming the
+`vsce package` output â€” same file set as the Phase 2 proof, confirming the
 rename/removal didn't change what ships:
 
 ```text
 extension/
-├─ LICENSE.txt [1.04 KB]
-├─ package.json [1.77 KB]
-├─ readme.md [2.24 KB]
-├─ config/tokens-cost.yaml [2.54 KB]
-└─ dist/
-   ├─ extension.js [123.15 KB]
-   └─ webview.js [10.28 KB]
+â”œâ”€ LICENSE.txt [1.04 KB]
+â”œâ”€ package.json [1.77 KB]
+â”œâ”€ readme.md [2.24 KB]
+â”œâ”€ config/tokens-cost.yaml [2.54 KB]
+â””â”€ dist/
+   â”œâ”€ extension.js [123.15 KB]
+   â””â”€ webview.js [10.28 KB]
 Packaged: agent-context-trail.vsix (8 files, 35.22 KB)
 ```
 
@@ -249,7 +249,7 @@ Returned no matches after the change (previously matched
 ## Known gaps
 
 - No visual re-confirmation of the status bar/panel after this change
-  (same environment limitation noted throughout this packet) — the
+  (same environment limitation noted throughout this packet) â€” the
   maintainer should reload the window and confirm the status bar no longer
   offers a unit-toggle link and both panel/status-bar numbers read as plain
   `$X.XX`.
@@ -274,3 +274,5 @@ Get-ChildItem -Recurse -Force specification
 - `specification/` now contains only direct spec files:
   `product-scope.md`, `provider-and-cost.md`, and
   `surfaces-and-privacy.md`.
+
+

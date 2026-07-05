@@ -1,12 +1,22 @@
-import { ConversationListItem, CostAmount, ProviderId, PromptRequest, UsageTokens } from '../domain/types';
+import {
+  ConversationListItem,
+  CostAmount,
+  CurrentStatusSnapshot,
+  ProviderId,
+  PromptRequest,
+  UsageTokens
+} from '../domain/types';
 
 export interface ConversationDetailPayload {
   provider: ProviderId;
   id: string;
   title?: string;
+  workspacePath: string;
+  updatedAt: string;
   requests: PromptRequest[];
   totalUsage: UsageTokens;
   totalCost: CostAmount;
+  currentStatus?: CurrentStatusSnapshot;
 }
 
 export type HostToWebviewMessage =

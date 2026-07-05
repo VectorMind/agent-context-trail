@@ -2,7 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ConversationListItem } from '../../domain/types';
-import { peekClaudeSessionTitle } from './parser';
+import { PricingService } from '../../pricing/pricingService';
+import { scanClaudeSessionMeta } from './parser';
 
 export function claudeProjectsRoot(): string {
   return path.join(os.homedir(), '.claude', 'projects');
@@ -124,25 +125,50 @@ export function getClaudeSessionFilePath(workspacePath: string, sessionId: strin
   return fs.existsSync(filePath) ? filePath : undefined;
 }
 
+/** Scan results keyed by file path; invalidated when the file's mtime moves. */
+const metaCache = new Map<string, { mtimeMs: number; item: ConversationListItem }>();
+
 /**
- * Conversation list for the panel's sidebar: titles + recency only, sorted
- * most-recently-updated first. Deliberately does not compute token/cost
- * totals (parseClaudeSession does that) since listing many sessions should
- * stay cheap.
+ * Conversation list for the panel: title plus lightweight per-conversation
+ * metadata (first/last timestamps, request count, token and cost totals) from
+ * a single streaming pass per session, cached by mtime so re-opening the
+ * panel only rescans files that actually changed. Sorted last-active first.
  */
-export async function listClaudeConversations(workspacePath: string): Promise<ConversationListItem[]> {
+export async function listClaudeConversations(
+  workspacePath: string,
+  pricing: PricingService
+): Promise<ConversationListItem[]> {
   const projectDir = findClaudeProjectDir(workspacePath);
   if (!projectDir) return [];
 
   const sessions = listClaudeSessions(projectDir);
   const items: ConversationListItem[] = [];
   for (const session of sessions) {
-    const title = await peekClaudeSessionTitle(session.filePath);
-    items.push({
+    const cached = metaCache.get(session.filePath);
+    if (cached && cached.mtimeMs === session.mtimeMs) {
+      items.push(cached.item);
+      continue;
+    }
+
+    const meta = await scanClaudeSessionMeta(session.filePath, pricing);
+    const mtimeIso = new Date(session.mtimeMs).toISOString();
+    const item: ConversationListItem = {
       id: session.sessionId,
-      title: title ?? '(untitled)',
-      updatedAt: new Date(session.mtimeMs).toISOString()
-    });
+      title: meta.title ?? '(untitled)',
+      updatedAt: mtimeIso,
+      firstAt: meta.firstAt,
+      lastAt: meta.lastAt ?? mtimeIso,
+      requestCount: meta.requestCount,
+      totalUsage: meta.totalUsage,
+      totalTokens:
+        meta.totalUsage.inputTokens +
+        meta.totalUsage.cacheReadTokens +
+        meta.totalUsage.cacheCreationTokens +
+        meta.totalUsage.outputTokens,
+      totalCostUsd: meta.totalCostUsd
+    };
+    metaCache.set(session.filePath, { mtimeMs: session.mtimeMs, item });
+    items.push(item);
   }
   return items;
 }

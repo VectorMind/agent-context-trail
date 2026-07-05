@@ -1,4 +1,4 @@
-# Implementation
+﻿# Implementation
 
 [######] Done - implemented and validated; follow-ups noted below.
 
@@ -12,8 +12,8 @@
 - `plans/open.md`
 - `plans/closed.md`
 - `plans/archive/.gitkeep`
-- `plans/2026-07-04-workflow-bootstrap/plan.md`
-- `plans/2026-07-04-workflow-bootstrap/test.md`
+- `plans/2026-07/04/workflow-bootstrap/plan.md`
+- `plans/2026-07/04/workflow-bootstrap/test.md`
 
 ## Implementation Facts
 
@@ -36,3 +36,5 @@
   architecture;
 - when runtime folders are introduced, their boundaries should be documented
   explicitly rather than inferred from this bootstrap.
+
+

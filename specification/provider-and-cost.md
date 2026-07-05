@@ -2,6 +2,22 @@
 
 Durable provider and cost contract for Agent Context Trail.
 
+## Provider Strategy
+
+The extension is not constrained to a lowest-common-denominator provider model.
+It should expose a shared core where fields are genuinely comparable, and it
+should also take maximum practical advantage of provider-specific local
+telemetry when a provider exposes richer signals.
+
+Binding rules:
+
+- The product may define provider-specific behavior and provider-specific
+  enriched fields when they improve the real reading of that provider.
+- A shared field should stay shared only when the underlying meaning is
+  actually comparable across providers.
+- Provider-specific depth must not be flattened away just to preserve a false
+  appearance of symmetry across Copilot, Codex, and Claude.
+
 ## Provider Support
 
 Three providers are in scope: Claude Code, Codex, and GitHub Copilot. They are
@@ -28,6 +44,9 @@ empty list indistinguishable from "no conversations found."
 ## Cost
 
 - Cost is always expressed in **USD**. There is no alternate display unit.
+- Provider/account status signals such as Codex or Claude rate-limit
+  consumption are not cost. They must be shown, when available, as separate
+  status fields rather than converted into USD or merged with USD cost.
 - Every cost figure carries a confidence label:
   - `provider-reported`: the provider's own log or response stated the cost.
   - `estimated`: computed from token counts against a maintained rate table,

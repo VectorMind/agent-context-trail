@@ -1,7 +1,7 @@
-# Agent Context Trail
+﻿# Agent Context Trail
 
 See how one agent conversation's context evolves, prompt by prompt: tokens,
-cache reuse, and cost — for Claude Code, Codex, and GitHub Copilot.
+cache reuse, and cost â€” for Claude Code, Codex, and GitHub Copilot.
 
 This is a local-first VS Code extension. It never uploads transcripts,
 prompts, or telemetry anywhere. Everything is read from the same local
@@ -15,12 +15,12 @@ panel.
 - Status bar shows **last call | conversation total** cost in USD.
 - Click the status bar item (or run `Agent Context Trail: Open Conversation
   Panel`) to open the panel: a conversation list (titles only, tabbed by
-  provider — only Claude is populated so far), a token/cost chart for the
+  provider â€” only Claude is populated so far), a token/cost chart for the
   selected conversation, and a per-request detail card on click.
 - `Agent Context Trail: Show Conversation Summary (Text)` still prints the
   same detail as plain text in the "Agent Context Trail" output channel.
-- Codex and GitHub Copilot are not implemented yet — see
-  `plans/2026-07-06-initial-design/plan.md` for the phased roadmap.
+- Codex and GitHub Copilot are not implemented yet â€” see
+  `plans/2026-07/06/initial-design/plan.md` for the phased roadmap.
 
 ## Development
 
@@ -59,5 +59,7 @@ is enough; a global install (`npm i -g @vscode/vsce`) also works.
 Cost is estimated from `config/tokens-cost.yaml`, which mirrors the official
 Anthropic pricing page (URL and retrieval date recorded in the file itself).
 When a provider log reports cost directly, that value is used instead and
-labeled accordingly. See `plans/2026-07-06-initial-design/plan.md` (DD-005)
+labeled accordingly. See `plans/2026-07/06/initial-design/plan.md` (DD-005)
 for the reasoning.
+
+

@@ -12,17 +12,23 @@ contracts live beside it in `specification/`.
 ## Product Identity
 
 Agent Context Trail is a local-first VS Code extension that shows the state of
-the current coding-agent conversation and explains it prompt by prompt: tokens,
-cache reuse, tool calls, and cost.
+the current coding-agent conversation, surfaces the current provider/session
+status that affects that conversation, and explains the work prompt by prompt:
+tokens, cache reuse, tool calls, and cost.
 
 It observes and explains. It is not a chat client, not an agent, and not a
 general usage-analytics dashboard.
 
 ## Data Scope
 
-The extension reasons about exactly two levels of data. No level above
-conversation is ever computed, stored, or displayed.
+The extension reasons about exactly three logical surfaces of data. No level
+above conversation is ever computed, stored, or displayed.
 
+- **Current Status**: live status facts that affect reading the current agent
+  state, but are not conversation aggregation. This includes provider-global
+  status such as rate-limit windows and selected-conversation status such as
+  context occupancy, total context capacity, reserved-for-output budget, and
+  long-context or expensive-context mode when the provider exposes them.
 - **Request**: one prompt iteration, bounded by one user prompt and the agent
   activity that follows it, up to the next user prompt.
 - **Conversation**: an ordered sequence of requests, identified by a
@@ -32,6 +38,8 @@ Binding rules:
 
 - No day, week, month, or other time-window aggregation.
 - No folder, project-portfolio, or cross-workspace aggregation.
+- Current Status may expose provider-global status or selected-conversation
+  status, but it must not compute summaries across conversations.
 - A conversation's totals are always the sum of its own requests, never an
   independently reported or externally aggregated figure.
 

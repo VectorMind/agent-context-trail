@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
-import { ConversationSummary } from './domain/types';
+import { ConversationListItem, ConversationSummary, ProviderId } from './domain/types';
 import { findLatestClaudeSession } from './providers/claude/discover';
 import { parseClaudeSession } from './providers/claude/parser';
+import { getCodexSessionFilePath, listCodexConversations } from './providers/codex/discover';
+import { parseCodexSession } from './providers/codex/parser';
 import { PricingService } from './pricing/pricingService';
+import { formatUsd } from './shared/format';
 import { StatusBarController } from './status/statusBar';
 import { PanelController } from './panel/panelController';
 
@@ -27,34 +30,69 @@ async function refresh(): Promise<void> {
   }
 
   try {
-    const session = findLatestClaudeSession(workspacePath);
-    if (!session) {
+    currentSummary = await loadLatestSummary(workspacePath);
+    if (!currentSummary) {
       currentSummary = undefined;
       statusBar.update(undefined);
       return;
     }
-    currentSummary = await parseClaudeSession(session.filePath, session.sessionId, workspacePath, pricing);
     statusBar.update(currentSummary);
   } catch (err) {
     outputChannel.appendLine(`[refresh] failed: ${(err as Error).stack ?? String(err)}`);
   }
 }
 
-function formatCostDetail(usd: number): string {
-  return `$${usd.toFixed(4)}`;
+async function loadLatestSummary(workspacePath: string): Promise<ConversationSummary | undefined> {
+  const claudeSession = findLatestClaudeSession(workspacePath);
+  const codexItems = await listCodexConversations(workspacePath);
+
+  const candidates: Array<{ provider: ProviderId; lastAt: string; load: () => Promise<ConversationSummary | undefined> }> = [];
+  if (claudeSession) {
+    candidates.push({
+      provider: 'claude',
+      lastAt: new Date(claudeSession.mtimeMs).toISOString(),
+      load: () => parseClaudeSession(claudeSession.filePath, claudeSession.sessionId, workspacePath, pricing)
+    });
+  }
+  if (codexItems[0]) {
+    candidates.push({
+      provider: 'codex',
+      lastAt: codexItems[0].lastAt,
+      load: async () => {
+        const summary = await listAndLoadCodexSummary(workspacePath, codexItems);
+        return summary;
+      }
+    });
+  }
+
+  if (candidates.length === 0) return undefined;
+  candidates.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  return candidates[0].load();
+}
+
+async function listAndLoadCodexSummary(
+  workspacePath: string,
+  items?: ConversationListItem[]
+): Promise<ConversationSummary | undefined> {
+  const codexItems = items ?? (await listCodexConversations(workspacePath));
+  const latest = codexItems[0];
+  if (!latest) return undefined;
+  const filePath = getCodexSessionFilePath(latest.id);
+  if (!filePath) return undefined;
+  return parseCodexSession(filePath, latest.id);
 }
 
 function showSummary(): void {
   outputChannel.clear();
 
   if (!currentSummary || currentSummary.requests.length === 0) {
-    outputChannel.appendLine('No Claude Code conversation found for this workspace yet.');
+    outputChannel.appendLine('No agent conversation found for this workspace yet.');
     outputChannel.show(true);
     return;
   }
 
   const s = currentSummary;
-  outputChannel.appendLine(`Conversation: ${s.title ?? '(untitled)'}`);
+  outputChannel.appendLine(`Conversation: ${s.title ?? '(untitled)'} (${s.provider})`);
   outputChannel.appendLine(`Workspace: ${s.workspacePath}`);
   outputChannel.appendLine(`Requests: ${s.requests.length}`);
   outputChannel.appendLine('');
@@ -63,7 +101,7 @@ function showSummary(): void {
     outputChannel.appendLine(
       `#${r.index + 1}  model=${r.model ?? 'unknown'}  in=${r.usage.inputTokens}` +
         `  cacheRead=${r.usage.cacheReadTokens}  cacheWrite=${r.usage.cacheCreationTokens}` +
-        `  out=${r.usage.outputTokens}  tools=${r.toolCallCount}  cost=${formatCostDetail(r.cost.usd)}`
+        `  out=${r.usage.outputTokens}  tools=${r.toolCallCount}  cost=${formatUsd(r.cost.usd)}`
     );
   }
 
@@ -71,7 +109,7 @@ function showSummary(): void {
   outputChannel.appendLine(
     `TOTAL  in=${s.totalUsage.inputTokens}  cacheRead=${s.totalUsage.cacheReadTokens}` +
       `  cacheWrite=${s.totalUsage.cacheCreationTokens}  out=${s.totalUsage.outputTokens}` +
-      `  cost=${formatCostDetail(s.totalCost.usd)}`
+      `  cost=${formatUsd(s.totalCost.usd)}`
   );
   outputChannel.show(true);
 }

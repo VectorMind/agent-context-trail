@@ -1,4 +1,4 @@
-# Implementation Log
+﻿# Implementation Log
 
 [######] Done - workflow checkpoint implemented and validated; follow-ups noted
 below.
@@ -7,9 +7,9 @@ below.
 
 - `WORKFLOW.md`
 - `AGENTS.md`
-- `plans/2026-07-05-specification-checkpoint/plan.md`
-- `plans/2026-07-05-specification-checkpoint/implementation.md`
-- `plans/2026-07-05-specification-checkpoint/test.md`
+- `plans/2026-07/05/specification-checkpoint/plan.md`
+- `plans/2026-07/05/specification-checkpoint/implementation.md`
+- `plans/2026-07/05/specification-checkpoint/test.md`
 - `plans/closed.md`
 
 ## Implementation Facts
@@ -28,3 +28,5 @@ below.
 
 - Existing open packets may not yet contain this checkpoint. Future work should
   refresh them when they are next touched or before they are validated.
+
+

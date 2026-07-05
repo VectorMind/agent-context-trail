@@ -43,17 +43,18 @@ Use `plans/` for dated work packets tied to a concrete task.
 Each packet should follow this shape:
 
 ```text
-plans/YYYY-MM-DD-<slug>/
-  survey.md            # only when explicitly requested
-  plan.md
-  implementation.md    # create only after implementation work exists
-  test.md
+plans/YYYY-MM/
+  DD/
+    change-id/
+      survey.md            # only when explicitly requested
+      plan.md
+      implementation.md    # create only after implementation work exists
+      test.md
 ```
 
-Keep packet dates as the day the packet starts. Use a short lowercase slug.
+Keep packet dates as the day the packet starts. Use the ISO month as the bucket, the two-digit day as the next folder, and a short lowercase change ID under that day.
 
-Use `plans/open.md` and `plans/closed.md` as concise packet indexes when it is
-useful to distinguish active from completed work.
+Use `plans/README.md` for the layout note and keep `plans/open.md` and `plans/closed.md` as concise packet indexes when it is useful to distinguish active from completed work.
 
 ## Plan Shape
 
@@ -81,17 +82,22 @@ marked done.
 At each checkpoint:
 
 - review the relevant `specification/*.md` files, if any exist;
-- identify planned changes that may violate an existing durable contract;
+- identify planned behavior that may need a durable contract change,
+  clarification, or explicit exception;
 - identify stable behavior, data, interface, or non-goal topics that may belong
   in `specification/`;
-- record the assessment in the packet, usually in `plan.md` before work starts
-  and in `implementation.md` or `test.md` when validation closes;
+- record the assessment in the packet as open specification-review points,
+  usually in `plan.md` before work starts and in `implementation.md` or
+  `test.md` when validation closes;
 - suggest candidate specification topics to the maintainer for review before
   adding them unless the maintainer already asked for specification updates or a
   stable contract has clearly emerged.
 
 If no specification exists or none applies, record that result explicitly. Do
 not treat the checkpoint as permission to create speculative specifications.
+Do not overstate plan/spec tension as a failure. Treat it as an explicit open
+point for maintainer review unless the plan would knowingly ship behavior
+against an already-settled durable contract.
 
 ## Implementation Log
 
