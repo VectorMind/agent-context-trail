@@ -9,14 +9,18 @@ session files the CLIs already write.
 
 ## Status
 
-Phase 1 (current): Claude Code data + status bar only.
+Phase 1 & 2 (current): Claude Code data, status bar, and the conversation
+panel.
 
-- Status bar shows **last call | conversation total** cost, in AIC (AI
-  Credit, 1 AIC = $0.01) or USD — click the tooltip link to toggle the unit.
-- Click the status bar item for a plain-text conversation summary (token
-  detail, per-request breakdown) in the "Agent Context Trail" output channel.
-- No side panel yet — see `plans/2026-07-06-initial-design/plan.md` for the
-  phased roadmap (chart panel, Codex, Copilot).
+- Status bar shows **last call | conversation total** cost in USD.
+- Click the status bar item (or run `Agent Context Trail: Open Conversation
+  Panel`) to open the panel: a conversation list (titles only, tabbed by
+  provider — only Claude is populated so far), a token/cost chart for the
+  selected conversation, and a per-request detail card on click.
+- `Agent Context Trail: Show Conversation Summary (Text)` still prints the
+  same detail as plain text in the "Agent Context Trail" output channel.
+- Codex and GitHub Copilot are not implemented yet — see
+  `plans/2026-07-06-initial-design/plan.md` for the phased roadmap.
 
 ## Development
 

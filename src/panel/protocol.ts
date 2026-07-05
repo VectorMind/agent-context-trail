@@ -15,7 +15,6 @@ export type HostToWebviewMessage =
       providers: ProviderId[];
       conversationsByProvider: Partial<Record<ProviderId, ConversationListItem[]>>;
       selected?: ConversationDetailPayload;
-      usdPerCredit: number;
     }
   | { type: 'conversationDetail'; detail: ConversationDetailPayload };
 

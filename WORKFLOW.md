@@ -1,8 +1,8 @@
 # Workflow
 
 This repository uses spec-driven development with a dated packet workflow.
-Stable requirements live in `specification/`. Time-bounded work lives in
-`plans/`.
+Stable requirements live as direct files in `specification/`. Time-bounded
+work lives in `plans/`.
 
 These folders are for coordination, intent, and proof. They are not runtime
 storage, cache locations, or placeholders for future product code.
@@ -10,16 +10,20 @@ storage, cache locations, or placeholders for future product code.
 ## Specification Reserve
 
 Use `specification/` only for durable contracts that should constrain more than
-one implementation pass.
+one implementation pass. This repository owns one product, Agent Context Trail,
+so the whole `specification/` folder is for that product.
 
 Create a specification only when the maintainer asks for one or when the work
 has clearly settled a rule that future changes must follow.
 
-When a durable specification is needed, place it at:
+When durable specification content is needed, place it directly under
+`specification/` and split files by concern:
 
 ```text
-specification/<slug>/spec.md
+specification/<concern>.md
 ```
+
+Do not create product slug subfolders under `specification/`.
 
 Specifications should describe stable facts such as:
 
@@ -59,6 +63,7 @@ that help the task:
 - problem summary;
 - goal and objectives;
 - scope and non-goals;
+- specification checkpoint;
 - open points and status;
 - phases or milestones;
 - dependencies and risks;
@@ -66,6 +71,27 @@ that help the task:
 
 Use stable IDs such as `OP-001` for unresolved questions when the packet needs
 tracked decisions.
+
+## Specification Checkpoint
+
+Every agreed plan needs a specification assessment before implementation starts,
+and every validated plan needs the assessment refreshed before the packet is
+marked done.
+
+At each checkpoint:
+
+- review the relevant `specification/*.md` files, if any exist;
+- identify planned changes that may violate an existing durable contract;
+- identify stable behavior, data, interface, or non-goal topics that may belong
+  in `specification/`;
+- record the assessment in the packet, usually in `plan.md` before work starts
+  and in `implementation.md` or `test.md` when validation closes;
+- suggest candidate specification topics to the maintainer for review before
+  adding them unless the maintainer already asked for specification updates or a
+  stable contract has clearly emerged.
+
+If no specification exists or none applies, record that result explicitly. Do
+not treat the checkpoint as permission to create speculative specifications.
 
 ## Implementation Log
 
@@ -128,6 +154,9 @@ Run the smallest meaningful verification for the change.
 - For workflow-only changes, verify document consistency and repository shape.
 - For future code changes, record the commands run and the commands not run in
   `test.md`.
+- Before marking a packet validated, refresh the specification checkpoint and
+  note any candidate specification topics that should be reviewed by the
+  maintainer.
 
 ## Git Ownership
 

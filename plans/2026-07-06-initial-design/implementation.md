@@ -1,7 +1,9 @@
 [######] Phase 1 & 2 done — Claude Code data + status bar + webview panel
 (conversation list, SVG chart, request detail) implemented and validated
 against real sessions; ready to reload/test in a running VS Code window.
-Follow-ups noted below. See "Phase 2" section further down for the panel.
+AIC unit subsequently dropped in favor of USD-only cost display (see the
+"Post-Phase-2 change" section at the end); direct `specification/*.md` files
+written as the Specification Checkpoint outcome. Follow-ups noted below.
 
 # Implementation Log — Phase 1
 
@@ -259,3 +261,63 @@ which plan.md left unspecified.
   full-height hit-target rect makes them still clickable, but a future pass
   may want to filter or visually flag them rather than let them look like
   empty bars.
+
+# Implementation Log — Post-Phase-2 change: drop the AIC unit
+
+The AIC ("AI Credit", $/100) unit introduced in Phase 1 (OP-001/OP-002) and
+carried through Phase 2's panel was removed entirely at the maintainer's
+request. Cost is USD only, everywhere: status bar, tooltip, panel detail
+card, and the output-channel text summary. plan.md §8 marks OP-001/OP-002
+"closed, later superseded" rather than rewriting their history.
+
+## Files changed
+
+- `config/tokens-cost.yaml` — removed the `credit:` block (`usdPerCredit`).
+- `src/pricing/pricingService.ts` — removed `usdPerCredit` getter and
+  `usdToCredit()`; `PricingFile` no longer has a `credit` field.
+- `src/status/statusBar.ts` — removed `CostUnit`, the `costUnit` config
+  getter, and the tooltip's "Switch to X" link; `formatCost` always renders
+  `$X.XX`. Constructor no longer needs `PricingService` (nothing left to
+  read from it).
+- `src/extension.ts` — removed the `agentContextTrail.setCostUnit` command
+  and the config-change listener that triggered a re-render on unit
+  toggle; `formatCostDetail` drops the AIC suffix.
+- `src/panel/protocol.ts`, `src/panel/panelController.ts`,
+  `src/webview/main.ts` — removed `usdPerCredit` from the `init` message and
+  from webview `State`; `formatCost` in the webview is USD-only.
+- `package.json` — removed the `agentContextTrail.costUnit` configuration
+  property and the `agentContextTrail.setCostUnit` command contribution.
+- `README.md` — status section rewritten to describe the current (Phase
+  1+2, USD-only) behavior instead of the stale Phase-1-only description it
+  still had.
+
+## Verification
+
+`npm run typecheck` clean, `npm run build` produced both bundles, `vsce
+package` shipped the same file set as before (`config/tokens-cost.yaml`,
+`dist/extension.js`, `dist/webview.js`, manifest/license/readme — no size
+surprises), and the VSIX was reinstalled locally. A `grep` for
+`AIC|credit|Credit` across `src/` after the change returned no matches.
+
+## Specification Checkpoint (WORKFLOW.md)
+
+Per `WORKFLOW.md`'s Specification Checkpoint, reviewed `specification/` for
+existing durable contracts before finishing this packet: **none existed
+yet** (the directory was empty). Phase 1 and Phase 2 together have now
+settled several rules stable enough to constrain future phases (Codex/
+Copilot adapters, live updates, etc.) rather than being one-phase
+implementation detail:
+
+- the two-level data scope (request, conversation — no aggregation above
+  that);
+- the "unavailable, never fabricated/zeroed" rule for missing provider
+  data;
+- the cost-confidence labeling (`provider-reported` / `estimated`);
+- the single-unit (USD) cost display, just settled by this change;
+- the status bar / panel division of responsibility (cost only vs. token
+  detail);
+- the provider-tab non-goal boundary (Claude full-featured pilot, Codex
+  best-effort, Copilot least-priority).
+
+These are captured in direct files under `specification/`, written as the
+outcome of this checkpoint.

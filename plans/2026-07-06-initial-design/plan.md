@@ -29,9 +29,10 @@ Two levels of data only. Nothing above the conversation is ever aggregated.
 - **Conversation**: title (as VS Code / the CLI shows it), provider, ordered
   list of requests, running totals of the same fields.
 
-Cost has two display units: **AIC (AI Credit, defined as $/100)** and **$**.
-Token counts appear only in the panel, never in the status bar — the formula
-from tokens to cost is too involved to compress into a status item.
+Cost is shown in **USD only** (the AI-Credit unit explored early in this
+packet was dropped post-Phase-2 — see the decision log, §8). Token counts
+appear only in the panel, never in the status bar — the formula from tokens
+to cost is too involved to compress into a status item.
 
 ### Non-goals (explicit exclusions)
 
@@ -46,12 +47,11 @@ from tokens to cost is too involved to compress into a status item.
 
 ### Status bar (always present, the only permanent surface)
 
-- Shows **both numbers side by side**: last call and conversation total,
-  e.g. `18 | 240 AIC` or `$0.18 | $2.40`.
-- One toggle only: **AIC ↔ $**. No token display in the status bar.
-- The toggle lives in the status-bar tooltip as a command link (VS Code
-  `MarkdownString` tooltips with `isTrusted` support this); the **click** on
-  the item itself opens the panel.
+- Shows **both numbers side by side**: last call and conversation total in
+  USD, e.g. `$0.18 | $2.40`. No unit toggle — see decision log §8.
+- No token display in the status bar.
+- The **click** on the item opens the panel; the tooltip is informational
+  only (title, both cost figures, a link to open the panel).
 
 ### Main surface: WebviewPanel (editor tab), opened on demand
 
@@ -236,9 +236,9 @@ Little by little, each phase shippable:
 
 - **Phase 1 — Scaffold + Claude data + status bar.** Extension scaffold
   (esbuild, `vsce` packaging); Claude JSONL parser → request/conversation
-  model; `config/tokens-cost.yaml` v1 with official source URLs; status bar item
-  `last | total` with AIC ↔ $ toggle in the tooltip. *Proof: values match a
-  real session; packaged VSIX installs locally (section 7).*
+  model; `config/tokens-cost.yaml` v1 with official source URLs; status bar
+  item `last | total` in USD. *Proof: values match a real session; packaged
+  VSIX installs locally (section 7).*
 - **Phase 2 — Panel.** WebviewPanel with conversation list (three tabs, only
   Claude populated), collapsible list, SVG thread chart, request-detail card
   on point click, tool-call counts.
@@ -287,10 +287,15 @@ One-time prerequisite: `npm i -g @vscode/vsce` (or use `npx vsce`).
 
 ## 8. Decision log (former open points)
 
-- **OP-001 — closed.** AIC = AI Credit = $/100. Status bar shows cost only
-  (AIC or $); tokens live in the panel exclusively.
-- **OP-002 — closed.** Status bar shows both numbers (last call | conversation
-  total); the only toggle is AIC ↔ $.
+- **OP-001 — closed, later superseded.** Originally: AIC = AI Credit = $/100,
+  status bar shows cost only (AIC or $), tokens live in the panel
+  exclusively. **Superseded post-Phase-2**: the AIC unit was dropped
+  entirely — cost is USD only, everywhere (status bar, panel, output
+  channel). Tokens still live in the panel exclusively.
+- **OP-002 — closed, later superseded.** Originally: status bar shows both
+  numbers (last call | conversation total) with an AIC ↔ $ toggle.
+  **Superseded post-Phase-2**: still shows both numbers, but with no unit
+  toggle — there is only one unit (USD) to toggle between.
 - **OP-003 — closed.** Main surface is a WebviewPanel (editor tab).
 - **OP-004 — closed.** Cache visibility required, but per-vendor best effort:
   Claude = full-feature pilot/reference, Codex = best effort, Copilot = only
@@ -302,9 +307,26 @@ One-time prerequisite: `npm i -g @vscode/vsce` (or use `npx vsce`).
   URLs and retrieval dates; provider-reported cost wins when present;
   gradual improvement expected.
 
-## 9. Exit criteria
+## 9. Specification Checkpoint
+
+Per `WORKFLOW.md`'s Specification Checkpoint: at the start of this packet,
+`specification/` was empty, so there was no existing durable contract to
+violate. By the close of Phase 2 (plus the post-Phase-2 AIC removal), this
+packet had settled rules stable enough to bind future phases rather than
+remaining one-phase implementation detail — the two-level data scope, the
+provider-honesty rule, the cost-confidence model, the status-bar/panel
+division of responsibility, and the provider-tier non-goals. Those are now
+captured in direct files under `specification/`. See
+`implementation.md`'s matching checkpoint entry for the full assessment.
+Future phases (Codex adapter, live updates, Copilot) should check that
+spec before diverging from it, and refresh it if a phase deliberately
+changes one of these rules.
+
+## 10. Exit criteria
 
 - ~~DD decisions accepted~~ — done 2026-07-04.
 - Phase 1 implemented and validated against at least one real Claude Code
   session (`implementation.md` + `test.md`).
 - Packaged VSIX installs and shows correct status-bar values on this machine.
+- ~~Specification Checkpoint recorded~~ — done; see §9 and
+  `specification/*.md`.

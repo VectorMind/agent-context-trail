@@ -80,8 +80,7 @@ export class PanelController implements vscode.Disposable {
       type: 'init',
       providers: PROVIDERS,
       conversationsByProvider,
-      selected,
-      usdPerCredit: this.pricing.usdPerCredit
+      selected
     });
   }
 
@@ -183,17 +182,100 @@ export class PanelController implements vscode.Disposable {
   .thread-meta { color: var(--vscode-descriptionForeground); font-size: 12px; margin-bottom: 12px; }
 
   .chart-host { margin-bottom: 16px; }
+  .chart-wrapper { position: relative; }
+  .chart-scroll { overflow-x: auto; }
+
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 14px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
+  .legend-line { width: 14px; height: 2px; border-radius: 1px; }
+
+  .chart-caption { font-size: 9px; letter-spacing: 0.08em; }
+  .chart-tick { font-size: 10px; }
+  .chart-tick.selected { font-weight: 600; }
+  .chart-value-label { font-size: 10px; }
+
+  .bar-group { cursor: pointer; }
+  .bar-group:hover .seg { filter: brightness(1.18); }
+  .bar-group:focus { outline: none; }
+  .bar-group:focus .hit { stroke: var(--vscode-focusBorder); stroke-width: 1.5; }
+
+  .chart-tooltip {
+    position: absolute;
+    z-index: 10;
+    pointer-events: none;
+    min-width: 170px;
+    padding: 8px 10px;
+    font-size: 11px;
+    border-radius: 4px;
+    background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+    color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  .tooltip-header { font-weight: 600; margin-bottom: 6px; }
+  .tooltip-model { font-weight: 400; color: var(--vscode-descriptionForeground); margin-left: 6px; font-size: 10px; }
+  .tooltip-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  .tooltip-key { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  .tooltip-key.line { height: 2px; border-radius: 1px; }
+  .tooltip-label { color: var(--vscode-descriptionForeground); }
+  .tooltip-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .chart-hint { margin-top: 6px; font-size: 11px; color: var(--vscode-descriptionForeground); }
 
   .detail-card {
     border: 1px solid var(--vscode-panel-border);
-    border-radius: 4px;
-    padding: 10px 12px;
-    max-width: 420px;
+    border-radius: 6px;
+    padding: 12px 14px;
+    max-width: 520px;
   }
-  .detail-card h3 { margin: 0 0 8px; font-size: 13px; }
-  .detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; }
-  .detail-label { color: var(--vscode-descriptionForeground); }
-  .detail-value { font-family: var(--vscode-editor-font-family, monospace); }
+  .detail-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .detail-header h3 { margin: 0; font-size: 13px; }
+  .detail-cost { font-size: 15px; font-weight: 600; }
+  .badge {
+    margin-left: 6px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 400;
+    border-radius: 8px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    vertical-align: middle;
+  }
+  .detail-meta { color: var(--vscode-descriptionForeground); font-size: 11px; margin: 4px 0 12px; }
+
+  .breakdown {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 7px 10px;
+    align-items: center;
+    font-size: 11px;
+  }
+  .breakdown-label { color: var(--vscode-descriptionForeground); }
+  .breakdown-track { height: 12px; border-radius: 0 4px 4px 0; }
+  .breakdown-bar { height: 100%; border-radius: 0 4px 4px 0; }
+  .breakdown-value { text-align: right; font-variant-numeric: tabular-nums; min-width: 58px; }
+  .breakdown-value.zero { color: var(--vscode-descriptionForeground); }
+
+  .shares { margin-top: 14px; display: flex; flex-direction: column; gap: 9px; }
+  .share-row { font-size: 11px; }
+  .share-head { display: flex; justify-content: space-between; margin-bottom: 3px; color: var(--vscode-descriptionForeground); }
+  .share-pct { color: var(--vscode-foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .share-track {
+    height: 5px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--vscode-progressBar-background) 22%, transparent);
+  }
+  .share-fill { height: 100%; background: var(--vscode-progressBar-background); border-radius: 3px; }
 </style>
 </head>
 <body>

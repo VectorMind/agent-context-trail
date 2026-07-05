@@ -3,7 +3,7 @@ import { ConversationSummary } from './domain/types';
 import { findLatestClaudeSession } from './providers/claude/discover';
 import { parseClaudeSession } from './providers/claude/parser';
 import { PricingService } from './pricing/pricingService';
-import { CostUnit, StatusBarController } from './status/statusBar';
+import { StatusBarController } from './status/statusBar';
 import { PanelController } from './panel/panelController';
 
 const REFRESH_INTERVAL_MS = 15_000;
@@ -41,7 +41,7 @@ async function refresh(): Promise<void> {
 }
 
 function formatCostDetail(usd: number): string {
-  return `$${usd.toFixed(4)} (${pricing.usdToCredit(usd).toFixed(2)} AIC)`;
+  return `$${usd.toFixed(4)}`;
 }
 
 function showSummary(): void {
@@ -79,7 +79,7 @@ function showSummary(): void {
 export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('Agent Context Trail');
   pricing = new PricingService(context.extensionPath);
-  statusBar = new StatusBarController(pricing);
+  statusBar = new StatusBarController();
   panelController = new PanelController(context, pricing);
 
   context.subscriptions.push(outputChannel, statusBar, panelController);
@@ -87,20 +87,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('agentContextTrail.refresh', () => refresh()),
     vscode.commands.registerCommand('agentContextTrail.showSummary', () => showSummary()),
-    vscode.commands.registerCommand('agentContextTrail.openPanel', () => panelController.reveal(getWorkspacePath())),
-    vscode.commands.registerCommand('agentContextTrail.setCostUnit', async (unit: CostUnit) => {
-      await vscode.workspace
-        .getConfiguration('agentContextTrail')
-        .update('costUnit', unit, vscode.ConfigurationTarget.Global);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('agentContextTrail.costUnit')) {
-        statusBar.update(currentSummary);
-      }
-    })
+    vscode.commands.registerCommand('agentContextTrail.openPanel', () => panelController.reveal(getWorkspacePath()))
   );
 
   const timer = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);

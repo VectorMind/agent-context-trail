@@ -13,7 +13,6 @@ interface ModelRate {
 
 interface PricingFile {
   schemaVersion: number;
-  credit: { usdPerCredit: number };
   claude: {
     source: string;
     retrieved: string;
@@ -38,14 +37,6 @@ export class PricingService {
       this.data = yaml.load(raw) as PricingFile;
     }
     return this.data;
-  }
-
-  get usdPerCredit(): number {
-    return this.load().credit.usdPerCredit;
-  }
-
-  usdToCredit(usd: number): number {
-    return usd / this.usdPerCredit;
   }
 
   private resolveClaudeModel(model: string | undefined): ModelRate {

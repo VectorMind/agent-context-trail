@@ -1,8 +1,8 @@
 # Test Proof — Phase 1 & 2
 
 Packet: `plans/2026-07-06-initial-design`. Proof for
-[implementation.md](implementation.md). Phase 2 proof is appended after the
-Phase 1 section below.
+[implementation.md](implementation.md). Phase 2 proof, and a later
+"drop the AIC unit" change, are appended after the Phase 1 section below.
 
 ## Commands run
 
@@ -206,3 +206,71 @@ detail.totalCost: { usd: 24.723301000000003, source: 'estimated' }
 - No automated test for the webview's message-handshake (`ready` → `init`)
   timing; verified only by code review of the race described in
   implementation.md, not by a running test.
+
+# Test Proof — Post-Phase-2 change: drop the AIC unit
+
+Proof for the "Post-Phase-2 change" section of implementation.md.
+
+## Commands run
+
+```powershell
+npm run typecheck    # tsc --noEmit -> clean
+npm run build         # esbuild -> dist/extension.js (123.15 KB) + dist/webview.js (10.28 KB)
+npx vsce package --no-dependencies -o agent-context-trail.vsix
+code --install-extension agent-context-trail.vsix --force
+```
+
+`vsce package` output — same file set as the Phase 2 proof, confirming the
+rename/removal didn't change what ships:
+
+```text
+extension/
+├─ LICENSE.txt [1.04 KB]
+├─ package.json [1.77 KB]
+├─ readme.md [2.24 KB]
+├─ config/tokens-cost.yaml [2.54 KB]
+└─ dist/
+   ├─ extension.js [123.15 KB]
+   └─ webview.js [10.28 KB]
+Packaged: agent-context-trail.vsix (8 files, 35.22 KB)
+```
+
+## Grep sweep
+
+```powershell
+grep -rniE "AIC|credit" src/
+```
+
+Returned no matches after the change (previously matched
+`statusBar.ts`, `extension.ts`, `panelController.ts`, `protocol.ts`,
+`webview/main.ts`, `pricingService.ts`). `config/tokens-cost.yaml`'s
+`credit:` block was removed in the same pass.
+
+## Known gaps
+
+- No visual re-confirmation of the status bar/panel after this change
+  (same environment limitation noted throughout this packet) — the
+  maintainer should reload the window and confirm the status bar no longer
+  offers a unit-toggle link and both panel/status-bar numbers read as plain
+  `$X.XX`.
+
+# Test Proof - Specification flattening
+
+Proof for the follow-up layout change that makes `specification/` itself the
+Agent Context Trail specification area and removes the nested product slug
+folder.
+
+## Commands run
+
+```powershell
+rg -n 'specification[/\\]agent-context-trail|specification[/\\][^/\\]+[/\\]spec[.]md|specification[/\\]<slug>[/\\]spec[.]md' AGENTS.md WORKFLOW.md README.md plans specification
+Get-ChildItem -Recurse -Force specification
+```
+
+## Actual
+
+- The `rg` check returned no matches for the old nested spec path or old
+  slug-based specification contract.
+- `specification/` now contains only direct spec files:
+  `product-scope.md`, `provider-and-cost.md`, and
+  `surfaces-and-privacy.md`.

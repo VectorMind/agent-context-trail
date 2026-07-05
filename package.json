@@ -43,30 +43,8 @@
       {
         "command": "agentContextTrail.openPanel",
         "title": "Agent Context Trail: Open Conversation Panel"
-      },
-      {
-        "command": "agentContextTrail.setCostUnit",
-        "title": "Agent Context Trail: Set Cost Unit"
       }
-    ],
-    "configuration": {
-      "title": "Agent Context Trail",
-      "properties": {
-        "agentContextTrail.costUnit": {
-          "type": "string",
-          "enum": [
-            "credit",
-            "usd"
-          ],
-          "enumDescriptions": [
-            "AI Credit (1 AIC = $0.01)",
-            "US Dollars"
-          ],
-          "default": "credit",
-          "description": "Unit used to display cost in the status bar."
-        }
-      }
-    }
+    ]
   },
   "scripts": {
     "build": "node esbuild.js",

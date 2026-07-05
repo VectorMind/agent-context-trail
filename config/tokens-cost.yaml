@@ -7,11 +7,6 @@
 # deliberately not auto-synced.
 schemaVersion: 1
 
-credit:
-  # 1 AI Credit (AIC), the unit shown in this extension's status bar,
-  # equals this many US dollars.
-  usdPerCredit: 0.01
-
 claude:
   source: https://platform.claude.com/docs/en/about-claude/pricing
   retrieved: "2026-07-04"
