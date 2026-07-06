@@ -4,6 +4,8 @@ import { findLatestClaudeSession } from './providers/claude/discover';
 import { parseClaudeSession } from './providers/claude/parser';
 import { getCodexSessionFilePath, listCodexConversations } from './providers/codex/discover';
 import { parseCodexSession } from './providers/codex/parser';
+import { getCopilotSessionFilePath, listCopilotConversations } from './providers/copilot/discover';
+import { parseCopilotSession } from './providers/copilot/parser';
 import { PricingService } from './pricing/pricingService';
 import { formatUsd } from './shared/format';
 import { StatusBarController } from './status/statusBar';
@@ -47,7 +49,10 @@ async function refresh(): Promise<void> {
 
 async function loadLatestSummary(workspacePath: string): Promise<ConversationSummary | undefined> {
   const claudeSession = findLatestClaudeSession(workspacePath);
-  const codexItems = await listCodexConversations(workspacePath, pricing);
+  const [codexItems, copilotItems] = await Promise.all([
+    listCodexConversations(workspacePath, pricing),
+    listCopilotConversations(workspacePath, pricing)
+  ]);
 
   const candidates: Array<{ provider: ProviderId; lastAt: string; load: () => Promise<ConversationSummary | undefined> }> = [];
   if (claudeSession) {
@@ -61,10 +66,14 @@ async function loadLatestSummary(workspacePath: string): Promise<ConversationSum
     candidates.push({
       provider: 'codex',
       lastAt: codexItems[0].lastAt,
-      load: async () => {
-        const summary = await listAndLoadCodexSummary(workspacePath, codexItems);
-        return summary;
-      }
+      load: () => listAndLoadCodexSummary(codexItems)
+    });
+  }
+  if (copilotItems[0]) {
+    candidates.push({
+      provider: 'copilot',
+      lastAt: copilotItems[0].lastAt,
+      load: () => listAndLoadCopilotSummary(workspacePath, copilotItems)
     });
   }
 
@@ -73,16 +82,23 @@ async function loadLatestSummary(workspacePath: string): Promise<ConversationSum
   return candidates[0].load();
 }
 
-async function listAndLoadCodexSummary(
-  workspacePath: string,
-  items?: ConversationListItem[]
-): Promise<ConversationSummary | undefined> {
-  const codexItems = items ?? (await listCodexConversations(workspacePath, pricing));
-  const latest = codexItems[0];
+async function listAndLoadCodexSummary(items: ConversationListItem[]): Promise<ConversationSummary | undefined> {
+  const latest = items[0];
   if (!latest) return undefined;
   const filePath = getCodexSessionFilePath(latest.id);
   if (!filePath) return undefined;
   return parseCodexSession(filePath, latest.id, undefined, pricing);
+}
+
+async function listAndLoadCopilotSummary(
+  workspacePath: string,
+  items: ConversationListItem[]
+): Promise<ConversationSummary | undefined> {
+  const latest = items[0];
+  if (!latest) return undefined;
+  const filePath = getCopilotSessionFilePath(latest.id);
+  if (!filePath) return undefined;
+  return parseCopilotSession(filePath, latest.id, workspacePath, pricing);
 }
 
 function showSummary(): void {

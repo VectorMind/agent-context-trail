@@ -31,6 +31,12 @@ interface PricingFile {
     models: Record<string, CodexModelRate>;
     fallback: CodexModelRate;
   };
+  copilot: {
+    source: string;
+    retrieved: string;
+    models: Record<string, CodexModelRate>;
+    fallback: CodexModelRate;
+  };
 }
 
 const DATE_SUFFIX = /-\d{8}$/;
@@ -62,6 +68,12 @@ export class PricingService {
 
   private resolveCodexModel(model: string | undefined): CodexModelRate {
     const { models, fallback } = this.load().codex;
+    if (!model) return fallback;
+    return models[model] ?? fallback;
+  }
+
+  private resolveCopilotModel(model: string | undefined): CodexModelRate {
+    const { models, fallback } = this.load().copilot;
     if (!model) return fallback;
     return models[model] ?? fallback;
   }
@@ -101,6 +113,26 @@ export class PricingService {
    */
   estimateCodexCost(model: string | undefined, usage: UsageTokens): CostAmount {
     const rate = this.resolveCodexModel(model);
+    const perToken = (rateUsdPerMTok: number) => rateUsdPerMTok / 1_000_000;
+
+    const usd =
+      usage.inputTokens * perToken(rate.baseInput) +
+      usage.cacheReadTokens * perToken(rate.cacheRead) +
+      usage.outputTokens * perToken(rate.output);
+
+    return { usd, source: 'estimated' };
+  }
+
+  /**
+   * Estimated cost only. Copilot never reports cost directly - its real
+   * economic signal is `copilotCredits` (premium-request credits), a
+   * separate plan-quota figure shown alongside this estimate, never merged
+   * with it. Resolved models that aren't in the rate table (including
+   * internal, non-public routing codenames) use the fallback rate rather
+   * than going `unavailable`, matching the Codex/Claude BYOT precedent.
+   */
+  estimateCopilotCost(model: string | undefined, usage: UsageTokens): CostAmount {
+    const rate = this.resolveCopilotModel(model);
     const perToken = (rateUsdPerMTok: number) => rateUsdPerMTok / 1_000_000;
 
     const usd =

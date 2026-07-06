@@ -132,3 +132,29 @@ codex:
     baseInput: 2.50
     cacheRead: 0.25
     output: 15.00
+
+# Copilot reports real per-request input/output tokens
+# (chatSessions.jsonl's promptTokens/completionTokens) and a resolved model
+# name, but never a cost figure - same bring-your-own-token situation as
+# Codex. Copilot's `resolvedModel` naming does not match the vendor APIs'
+# own model ids (e.g. "gpt-5-mini" here vs Codex's "gpt-5.4-mini"), and
+# Copilot can also resolve to internal, non-public routing codenames (e.g.
+# "oswe-vscode-prime", observed on real local data) that have no published
+# rate at all. Rather than leave those `unavailable` - which the project's
+# BYOT rule reserves for "no rate table entry exists," not "unrecognized
+# model name" - every resolved model not listed below falls back to a
+# generic current-generation mid-tier rate.
+copilot:
+  source: https://developers.openai.com/api/docs/pricing
+  retrieved: "2026-07-06"
+  models: {}
+  # No confirmed per-model Copilot rate entries yet (see comment above) -
+  # every resolved model uses this fallback until specific entries are
+  # verified against a cited, dated source. Same absolute numbers as
+  # codex.fallback (current-generation OpenAI mid-tier), since Copilot's
+  # own local data has so far resolved to OpenAI-family models on this
+  # account.
+  fallback:
+    baseInput: 2.50
+    cacheRead: 0.25
+    output: 15.00

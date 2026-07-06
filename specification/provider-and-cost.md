@@ -28,9 +28,11 @@ them to look equivalent when they are not.
   feature depth: tokens, cache read/write, cost, tool calls, and titles.
 - **Codex** is implemented best-effort against whatever its local session data
   exposes.
-- **GitHub Copilot** is lowest priority. It is implemented only as far as its
-  local session data yields cheaply: titles and conversation structure. Richer
-  telemetry is out of scope until separately investigated.
+- **GitHub Copilot** reaches real input/output tokens, resolved model, and an
+  `estimated` USD cost from its local `chatSessions` log alone - zero
+  configuration, no opt-in setting or export step. Its one durable gap is
+  cache-read/cache-write tokens, which that log does not record at all
+  (`plans/2026-07/06/copilot-parity`).
 
 Binding rule: never fabricate missing data. If a provider's local data does
 not expose a field, such as Copilot cache tokens, the extension must present

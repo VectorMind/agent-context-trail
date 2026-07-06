@@ -1,27 +1,37 @@
 # Open Packets
 
-- `plans/2026-07/06/copilot-parity` - planned 2026-07-06: implement Copilot
-  support in two tiers. Tier 1 (zero-config): parse local VS Code
-  `workspaceStorage/*/chatSessions` data for prompts, models, timings, tool
-  calls, errors, titles, premium-request multiplier, thinking tokens,
-  edited-file events. Tier 2 (opt-in): read the real token/cache data from
-  Copilot's own OpenTelemetry SQLite export (`agent-traces.db`, real schema
-  captured from `microsoft/vscode-copilot-chat` source in `plan.md`) via
-  `sql.js` (WASM, resolved `OP-006`) to get Claude/Codex-equivalent tokens
-  and `estimated` USD cost - gated entirely behind the user enabling
-  `github.copilot.chat.otel.dbSpanExporter.enabled` and running `Chat:
-  Export Agent Traces DB` themselves; the extension never flips that
-  setting or runs that command (contrast: Copilot Cost Tracker auto-enables
-  it). README documents the three manual setup steps. Adds the packet's
-  first disk-persisted artifact (an OTel span cache under
-  `context.globalStorageUri`), so `surfaces-and-privacy.md` gained active
-  retention enforcement (prune-on-write, logged, default 90 days /
-  `agentContextTrail.retentionDays`, configurable) and a new Storage Footer
-  requirement at the bottom of the panel reporting the extension's own
-  on-disk footprint - both added per the maintainer's direct request, not
-  deferred. `OP-005` (export file location + `chat_session_id`/`turn_index`
-  correlation) is maintainer-assisted: maintainer enables the setting and
-  runs the export, assistant inspects the resulting file read-only. See
+- `plans/2026-07/06/tool-timeline` - planned 2026-07-06: per-tool-call chart
+  in the enriched request card - one column per call (matching the Tools
+  table's `#` order), aligned In/Out/Time lanes in the existing Layout D
+  lane language, plus a section title rename. Verified against real local
+  files: Claude and Codex have per-call timing already parsed into
+  `ToolCallInfo`; Copilot has round-granular starts and no per-call
+  durations, so its Time lane is honestly unavailable. No parser or domain
+  changes needed. OP-001..OP-004 resolved same day by maintainer: sequence
+  lanes; a **new "Prompt timeline" section** ("Prompt detail" stays exactly
+  as is); breakdown/chart/table stack preserved; linear scale. Ready to
+  implement. See `plan.md`.
+
+- `plans/2026-07/06/copilot-parity` - planned and implemented 2026-07-06,
+  revised same day after empirical correction: Copilot support from local VS Code
+  `workspaceStorage/*/chatSessions/*.jsonl` data - zero configuration.
+  Original draft assumed real tokens/cost required Copilot's opt-in
+  OpenTelemetry export (`agent-traces.db` via `sql.js`); direct inspection
+  of this workspace's own real chatSessions files (VS Code + Copilot Chat
+  0.55.0) falsified that - real `promptTokens`/`completionTokens`,
+  `result.metadata.resolvedModel`, and a real fractional `copilotCredits`
+  premium-cost signal are already in the always-on log (`OP-004` also
+  resolved: format is `.jsonl`, an append log of `kind:0` snapshot +
+  `kind:2` finished-request entries; `kind:1` in-flight streaming deltas are
+  ignored). Cache-read/write tokens remain the one genuine gap (not present
+  anywhere in the source). The OTel/`sql.js` tier is deferred, not built -
+  parked in `plan.md` for a future packet if cache-level detail ever
+  matters. Because no disk-persisted artifact ships in this revision, the
+  Data Retention rule added to `surfaces-and-privacy.md` earlier in planning
+  stays dormant; the new Storage Footer panel element still ships, in its
+  static "no local data stored" state, since it's now a required panel
+  element regardless of adapter. `provider-and-cost.md`'s Copilot paragraph
+  updated to match (was "out of scope until separately investigated"). See
   `plan.md`.
 
 - `plans/2026-07/05/marketplace-release` - implemented and validated

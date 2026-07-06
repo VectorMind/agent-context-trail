@@ -66,6 +66,15 @@ const DUR_CAPTION_Y = MODEL_BOTTOM + 22;
 const DUR_TOP = DUR_CAPTION_Y + 8;
 const DUR_H = 40;
 const DUR_BOTTOM = DUR_TOP + DUR_H;
+// Tool-call and LLM-call count lanes, same treatment as the wall-time bars.
+const TOOLS_CAPTION_Y = DUR_BOTTOM + 22;
+const TOOLS_TOP = TOOLS_CAPTION_Y + 8;
+const TOOLS_H = 40;
+const TOOLS_BOTTOM = TOOLS_TOP + TOOLS_H;
+const LLM_CAPTION_Y = TOOLS_BOTTOM + 22;
+const LLM_TOP = LLM_CAPTION_Y + 8;
+const LLM_H = 40;
+const LLM_BOTTOM = LLM_TOP + LLM_H;
 
 /**
  * Fixed categorical order for identity in timeline lanes and category
@@ -84,8 +93,63 @@ export const CATEGORY_COLORS = [
 ];
 /** Neutral single-series hue for the wall-time lane (time, not an economic series). */
 const DURATION_COLOR = 'var(--vscode-charts-lines, var(--vscode-descriptionForeground))';
+/** Single-series hues for the tool-call and LLM-call count lanes. */
+const TOOL_CALLS_COLOR = 'var(--vscode-charts-green)';
+const LLM_CALLS_COLOR = 'var(--vscode-charts-purple)';
 /** Reserved status color for cache-break markers; ships with a glyph + legend, never color alone. */
 const WARN_COLOR = 'var(--vscode-editorWarning-foreground, var(--vscode-charts-orange))';
+
+// ---- label-on-color contrast (specification/ui-design.md "Text over color") ---------------
+// A label's fill is never a fixed white/foreground: it is picked per WCAG
+// relative-luminance contrast against whatever it actually sits on, resolved
+// from the live theme (not assumed light/dark).
+
+const LABEL_DARK: [number, number, number] = [20, 20, 20];
+const LABEL_LIGHT: [number, number, number] = [245, 245, 245];
+
+/** Resolve any CSS `<color>` (var(), keyword, hex...) to RGB via a throwaway attached probe. */
+function resolveRgb(cssColor: string): [number, number, number] | undefined {
+  const probe = document.createElement('span');
+  probe.style.color = cssColor;
+  probe.style.display = 'none';
+  document.body.appendChild(probe);
+  const resolved = getComputedStyle(probe).color;
+  document.body.removeChild(probe);
+  const m = resolved.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+}
+
+/** WCAG relative luminance (0 = black, 1 = white). */
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  const lin = (c: number): number => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG contrast ratio between two relative luminances (1:1 to 21:1). */
+function contrastRatio(l1: number, l2: number): number {
+  const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * Text color for a label that may land on `onColor` (e.g. a bar fill) or spill
+ * onto the plot surface behind it: never assume, resolve both and pick
+ * whichever of a dark/light ink maximizes the worst-case contrast across the
+ * two possible backgrounds — a codified middle choice, not a fixed white.
+ */
+function contrastingLabelColor(onColor: string): string {
+  const bg = resolveRgb(onColor);
+  const surface = resolveRgb(SURFACE);
+  if (!bg || !surface) return TEXT;
+  const bgL = relativeLuminance(bg);
+  const surfaceL = relativeLuminance(surface);
+  const darkWorst = Math.min(contrastRatio(relativeLuminance(LABEL_DARK), bgL), contrastRatio(relativeLuminance(LABEL_DARK), surfaceL));
+  const lightWorst = Math.min(contrastRatio(relativeLuminance(LABEL_LIGHT), bgL), contrastRatio(relativeLuminance(LABEL_LIGHT), surfaceL));
+  return darkWorst >= lightWorst ? 'rgb(20, 20, 20)' : 'rgb(245, 245, 245)';
+}
 
 export function formatDurationMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -99,6 +163,64 @@ export function formatDurationMs(ms: number): string {
 
 export function shortModelName(model: string): string {
   return model.replace(/^claude-/, '');
+}
+
+/**
+ * Direct value label for a lane bar: above the bar when there's room below
+ * the caption, otherwise inside the bar (near its top) so it never collides
+ * with the caption text — this triggers whenever the busiest bar fills (or
+ * nearly fills) the lane, which a two-column chart hits constantly. Either
+ * way the label may land on `barColor` or spill onto the plot surface, so its
+ * fill is contrast-resolved against both rather than fixed to TEXT.
+ */
+function laneValueLabel(cx: number, barTop: number, laneTop: number, text: string, barColor: string): SVGTextElement {
+  const fitsAbove = barTop - laneTop >= 12;
+  const label = svgEl('text', {
+    x: cx,
+    y: fitsAbove ? barTop - 4 : barTop + 12,
+    'text-anchor': 'middle',
+    class: 'chart-value-label',
+    fill: fitsAbove ? TEXT : contrastingLabelColor(barColor)
+  });
+  label.textContent = text;
+  return label;
+}
+
+/** One bar-per-request lane for a small integer count (tool calls, LLM calls, ...). */
+function renderCountLane(
+  laneLayer: SVGGElement,
+  requests: PromptRequest[],
+  colX: (i: number) => number,
+  plotRight: number,
+  layout: { captionY: number; bottom: number; height: number },
+  caption: string,
+  color: string,
+  getValue: (r: PromptRequest) => number | undefined
+): void {
+  const captionEl = svgEl('text', { x: M_LEFT, y: layout.captionY, class: 'chart-caption', fill: TEXT_MUTED });
+  captionEl.textContent = caption;
+  laneLayer.appendChild(captionEl);
+  laneLayer.appendChild(
+    svgEl('line', { x1: M_LEFT, y1: layout.bottom, x2: plotRight, y2: layout.bottom, stroke: GRID, 'stroke-width': 1 })
+  );
+  const values = requests.map((r) => getValue(r) ?? 0);
+  const maxValue = Math.max(1, ...values);
+  const maxIndex = values.indexOf(Math.max(...values));
+  requests.forEach((_, i) => {
+    const v = values[i];
+    if (v <= 0) return;
+    const h = Math.max(1.5, (v / maxValue) * layout.height);
+    const bar = topRoundedRect(colX(i), layout.bottom - h, BAR_WIDTH, h, 3);
+    bar.setAttribute('fill', color);
+    laneLayer.appendChild(bar);
+  });
+  // selective direct label: only the busiest request
+  if (values[maxIndex] > 0) {
+    const cx = colX(maxIndex) + BAR_WIDTH / 2;
+    const barTop = layout.bottom - (values[maxIndex] / maxValue) * layout.height;
+    const laneTop = layout.bottom - layout.height;
+    laneLayer.appendChild(laneValueLabel(cx, barTop, laneTop, String(values[maxIndex]), color));
+  }
 }
 
 /** Idle time between the end of the previous request and the start of this one. */
@@ -228,7 +350,7 @@ export function renderChart(
   const hasCost = requests.some((request) => request.cost.usd !== undefined);
   const models = timeline ? modelColorMap(requests) : undefined;
   const hasCacheBreaks = timeline && requests.some((r) => (r.cacheMisses?.length ?? 0) > 0);
-  const plotBottom = timeline ? DUR_BOTTOM : COST_BOTTOM;
+  const plotBottom = timeline ? LLM_BOTTOM : COST_BOTTOM;
   const xLabelY = plotBottom + 15;
   const chartHeight = xLabelY + 8;
 
@@ -269,7 +391,7 @@ export function renderChart(
     role: 'img',
     'aria-label':
       'Token usage per prompt with cost per prompt below, sharing one prompt axis' +
-      (timeline ? ', plus aligned model and wall-time lanes' : '')
+      (timeline ? ', plus aligned model, wall-time, tool-call, and LLM-call lanes' : '')
   });
   scroll.appendChild(svg);
 
@@ -337,7 +459,10 @@ export function renderChart(
         tooltip.appendChild(tooltipRow(undefined, false, 'Idle before', formatDurationMs(gap)));
       }
       if (request.toolCallCount > 0) {
-        tooltip.appendChild(tooltipRow(undefined, false, 'Tool calls', String(request.toolCallCount)));
+        tooltip.appendChild(tooltipRow(TOOL_CALLS_COLOR, false, 'Tool calls', String(request.toolCallCount)));
+      }
+      if (request.llmCallCount !== undefined && request.llmCallCount > 0) {
+        tooltip.appendChild(tooltipRow(LLM_CALLS_COLOR, false, 'LLM calls', String(request.llmCallCount)));
       }
       for (const miss of request.cacheMisses ?? []) {
         tooltip.appendChild(
@@ -563,16 +688,30 @@ export function renderChart(
     // selective direct label: only the longest request
     if (durations[maxDurIndex] > 0) {
       const cx = colX(maxDurIndex) + BAR_WIDTH / 2;
-      const durLabel = svgEl('text', {
-        x: cx,
-        y: DUR_BOTTOM - (durations[maxDurIndex] / maxDur) * DUR_H - 4,
-        'text-anchor': 'middle',
-        class: 'chart-value-label',
-        fill: TEXT
-      });
-      durLabel.textContent = formatDurationMs(durations[maxDurIndex]);
-      laneLayer.appendChild(durLabel);
+      const barTop = DUR_BOTTOM - (durations[maxDurIndex] / maxDur) * DUR_H;
+      laneLayer.appendChild(laneValueLabel(cx, barTop, DUR_TOP, formatDurationMs(durations[maxDurIndex]), DURATION_COLOR));
     }
+
+    renderCountLane(
+      laneLayer,
+      requests,
+      colX,
+      plotRight,
+      { captionY: TOOLS_CAPTION_Y, bottom: TOOLS_BOTTOM, height: TOOLS_H },
+      'TOOL CALLS',
+      TOOL_CALLS_COLOR,
+      (r) => r.toolCallCount
+    );
+    renderCountLane(
+      laneLayer,
+      requests,
+      colX,
+      plotRight,
+      { captionY: LLM_CAPTION_Y, bottom: LLM_BOTTOM, height: LLM_H },
+      'LLM CALLS',
+      LLM_CALLS_COLOR,
+      (r) => r.llmCallCount
+    );
 
     svg.appendChild(laneLayer);
   }

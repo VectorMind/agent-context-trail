@@ -480,6 +480,9 @@ export async function parseCodexSession(
       current.latestReasoningOutputTokens = lastTokenUsage.reasoning_output_tokens;
       if (typeof info?.model_context_window === 'number') current.latestModelContextWindow = info.model_context_window;
       current.latestRateLimits = rateLimitsFromPayload(payload.rate_limits as CodexRateLimits | undefined);
+      // One token_count event fires per LLM response within the turn (the
+      // agentic tool-call loop can call the model several times per prompt).
+      current.request.llmCallCount = (current.request.llmCallCount ?? 0) + 1;
       continue;
     }
 

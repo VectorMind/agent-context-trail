@@ -43,7 +43,7 @@ cost, how much context it carried, and how much the cache saved.
 |---|---|
 | **Claude Code** | Full: tokens, cache read/write, cost, tool calls, titles, request detail |
 | **Codex** | Best-effort from local session data, including Codex-native signals |
-| **GitHub Copilot** | Planned |
+| **GitHub Copilot** | Real tokens, model, tool calls, and estimated cost from VS Code's own chat log — no setup step (see below) |
 
 ## Getting started
 
@@ -65,6 +65,27 @@ Local-first, by contract:
   write. No server process, no account, no sign-in.
 - No telemetry, no analytics, no upload of prompts, transcripts, or file
   contents — under any configuration.
+
+## Copilot support
+
+Copilot's numbers come from the same `chatSessions` log VS Code's own Chat
+view already writes for its history UI — nothing to enable, no command to
+run, no export step.
+
+- **What's shown**: real prompts, resolved model, input/output tokens, tool
+  calls, timings, and an `estimated` USD cost, plus Copilot's own real
+  premium-request credit figure (`copilotCredits`) shown alongside the cost
+  estimate as its own signal — never merged with it.
+- **What's not shown, and why**: cache-read/cache-write token counts.
+  Unlike Claude and Codex, Copilot's local log does not record them at all —
+  this is a real gap in the data, not something this extension chose to
+  hide.
+- Cost is `estimated`, the same bring-your-own-token convention used for
+  Claude and Codex: GitHub does not publish a Copilot token-to-USD rate, so
+  this extension estimates against the resolved underlying model's public
+  API rate where known, falling back to a generic current-generation rate
+  for models it doesn't recognize (including internal Copilot routing
+  codenames) rather than reporting no cost at all.
 
 ## Cost estimation
 

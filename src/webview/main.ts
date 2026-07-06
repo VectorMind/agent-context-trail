@@ -52,9 +52,9 @@ const LAYOUTS: { id: LayoutId; label: string; hint: string }[] = [
 ];
 
 const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] = [
+  { id: 'limits', title: 'Provider Limits', icon: '≡', hint: 'Provider plan and rate-limit usage' },
   { id: 'chart', title: 'Tokens per conversation', icon: '▦', hint: 'Token totals per conversation' },
   { id: 'table', title: 'Conversations', icon: '☰', hint: 'Sortable, filterable conversations table' },
-  { id: 'limits', title: 'Provider Limits', icon: '≡', hint: 'Provider plan and rate-limit usage' },
   { id: 'context', title: 'Current Context Status', icon: '≣', hint: 'Selected conversation context occupancy' },
   { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
   { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' }
@@ -424,7 +424,6 @@ function renderWorkspaceScope(container: HTMLElement): void {
 }
 
 function emptyMessage(): string {
-  if (state.selectedProvider === 'copilot') return 'Copilot support is not implemented yet.';
   return `No ${PROVIDER_LABELS[state.selectedProvider]} conversations found for this workspace yet.`;
 }
 
@@ -1325,7 +1324,7 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
   if (request.durationMs !== undefined) chips.appendChild(chip('wall time', formatDurationMs(request.durationMs)));
   const gap = gapBeforeMs(detail.requests, request.index);
   if (gap !== undefined) chips.appendChild(chip('idle before', formatDurationMs(gap), 'Time since the previous request ended'));
-  if (request.apiCallCount !== undefined) chips.appendChild(chip('API calls', String(request.apiCallCount)));
+  if (request.llmCallCount !== undefined) chips.appendChild(chip('LLM calls', String(request.llmCallCount)));
   chips.appendChild(chip('tool calls', String(request.toolCallCount)));
   if (request.serviceTier) chips.appendChild(chip('tier', request.serviceTier));
   if (request.speed && request.speed !== 'standard') chips.appendChild(chip('speed', request.speed));
@@ -1336,6 +1335,11 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
     chips.appendChild(chip('reasoning output', formatTokensCompact(request.reasoningOutputTokens)));
   }
   if (request.modelContextWindow !== undefined) chips.appendChild(chip('context window', formatTokensCompact(request.modelContextWindow)));
+  if (request.premiumCredits !== undefined) {
+    chips.appendChild(
+      chip('premium credits', request.premiumCredits.toFixed(request.premiumCredits < 10 ? 1 : 0), 'Copilot premium-request credits consumed — a plan-quota signal, separate from the USD cost estimate below')
+    );
+  }
   card.appendChild(chips);
 
   // ---- prompt (click or hover to see the full text; own input, not a tool payload) ----
@@ -1402,6 +1406,21 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
     diag.appendChild(row);
   }
   card.appendChild(diag);
+
+  // ---- edited files (Copilot-native) ----
+  if (request.editedFiles?.length) {
+    card.appendChild(subHeading(`Edited files (${request.editedFiles.length})`));
+    const list = document.createElement('div');
+    list.className = 'diag';
+    for (const filePath of request.editedFiles) {
+      const row = document.createElement('div');
+      row.className = 'diag-row';
+      row.textContent = filePath;
+      row.title = filePath;
+      list.appendChild(row);
+    }
+    card.appendChild(list);
+  }
 
   // ---- output composition ----
   if (request.thinkingChars !== undefined || request.textChars !== undefined) {
@@ -1848,6 +1867,22 @@ function applyDetail(detail: ConversationDetailPayload | undefined, preserveSele
   if (detail) state.selectedProvider = detail.provider;
 }
 
+// ---- storage footer -----------------------------------------------------------------
+
+/**
+ * Non-collapsible, always at the bottom of the page (surfaces-and-privacy.md
+ * "Storage Footer"). Every adapter today stays in-memory-only, so this
+ * always reads "no local data stored" — it exists so that fact is a visible
+ * guarantee, not just a policy, the moment any adapter ever does persist
+ * something to disk.
+ */
+function renderStorageFooter(container: HTMLElement): void {
+  const footer = document.createElement('div');
+  footer.className = 'storage-footer';
+  footer.textContent = 'No local data stored — Agent Context Trail reads provider logs directly and writes nothing of its own to disk.';
+  container.appendChild(footer);
+}
+
 // ---- root render ------------------------------------------------------------------
 
 function render(): void {
@@ -1866,6 +1901,7 @@ function render(): void {
     renderStack(body, state.layout);
   }
   app.appendChild(body);
+  renderStorageFooter(app);
 
   // Selections update panels in place: restore the scroll position exactly,
   // never animate or jump the page.

@@ -6,6 +6,8 @@ import {
 import { parseClaudeSession } from '../providers/claude/parser';
 import { getCodexSessionFilePath, listCodexConversations } from '../providers/codex/discover';
 import { parseCodexSession } from '../providers/codex/parser';
+import { getCopilotSessionFilePath, listCopilotConversations } from '../providers/copilot/discover';
+import { parseCopilotSession } from '../providers/copilot/parser';
 import { PricingService } from '../pricing/pricingService';
 import { ConversationListItem, ProviderId } from '../domain/types';
 import { ConversationDetailPayload, HostToWebviewMessage, WebviewToHostMessage } from './protocol';
@@ -78,16 +80,17 @@ export class PanelController implements vscode.Disposable {
 
   private async sendInit(): Promise<void> {
     const workspacePath = this.workspacePath;
-    const [claudeItems, codexItems]: [ConversationListItem[], ConversationListItem[]] = workspacePath
+    const [claudeItems, codexItems, copilotItems]: [ConversationListItem[], ConversationListItem[], ConversationListItem[]] = workspacePath
       ? await Promise.all([
           listClaudeConversations(workspacePath, this.pricing),
-          listCodexConversations(workspacePath, this.pricing)
+          listCodexConversations(workspacePath, this.pricing),
+          listCopilotConversations(workspacePath, this.pricing)
         ])
-      : [[], []];
+      : [[], [], []];
     const conversationsByProvider: Partial<Record<ProviderId, ConversationListItem[]>> = {
       claude: claudeItems,
       codex: codexItems,
-      copilot: []
+      copilot: copilotItems
     };
     const selectedRef = this.findSelectedConversation(conversationsByProvider);
     const selected = selectedRef ? await this.loadDetail(selectedRef.provider, selectedRef.item.id) : undefined;
@@ -129,6 +132,25 @@ export class PanelController implements vscode.Disposable {
       const summary = await parseCodexSession(filePath, id, undefined, this.pricing);
       return {
         provider: 'codex',
+        id,
+        title: summary.title,
+        workspacePath: summary.workspacePath,
+        updatedAt: summary.updatedAt,
+        requests: summary.requests,
+        totalUsage: summary.totalUsage,
+        totalCost: summary.totalCost,
+        currentStatus: summary.currentStatus
+      };
+    }
+
+    if (provider === 'copilot') {
+      if (!this.workspacePath) return undefined;
+      const filePath = getCopilotSessionFilePath(id);
+      if (!filePath) return undefined;
+
+      const summary = await parseCopilotSession(filePath, id, this.workspacePath, this.pricing);
+      return {
+        provider: 'copilot',
         id,
         title: summary.title,
         workspacePath: summary.workspacePath,
@@ -795,6 +817,15 @@ export class PanelController implements vscode.Disposable {
     background: color-mix(in srgb, var(--vscode-progressBar-background) 22%, transparent);
   }
   .share-fill { height: 100%; background: var(--vscode-progressBar-background); border-radius: 3px; }
+
+  .storage-footer {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    border-top: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+  }
 </style>
 </head>
 <body>

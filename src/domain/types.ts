@@ -92,9 +92,9 @@ export interface PromptRequest {
   // absent means "unavailable in the source log", never zero. ----
   /** Wall time from the user prompt to the last assistant record, ms. */
   durationMs?: number;
-  /** Number of API calls (assistant records) grouped into this request. */
-  apiCallCount?: number;
-  /** stop_reason of the request's final API call. */
+  /** Number of LLM calls (model completions) grouped into this request. */
+  llmCallCount?: number;
+  /** stop_reason of the request's final LLM call. */
   stopReason?: string;
   serviceTier?: string;
   /** e.g. "fast" when fast mode served the request. */
@@ -115,6 +115,10 @@ export interface PromptRequest {
   reasoningOutputTokens?: number;
   timeToFirstTokenMs?: number;
   modelContextWindow?: number;
+  /** Copilot: real fractional premium-request credits consumed (e.g. 1.4), not USD. */
+  premiumCredits?: number;
+  /** Copilot: file paths touched by this request's edits, when the source data has them. */
+  editedFiles?: string[];
 }
 
 export interface ConversationListItem {

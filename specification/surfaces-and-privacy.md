@@ -61,7 +61,8 @@ order:
     composition and cost, scaled to the conversation's own range rather than a
     fixed or cross-conversation scale;
   - aligned request-level lanes for provider metadata when available, at
-    minimum model and wall time, without merging unlike units onto one axis;
+    minimum model and wall time, without merging unlike units onto one axis
+    (see `ui-design.md`);
   - a way to select any individual request from that chart.
 - **Request detail** - the selected request's full detail: model,
   input/output/cache-read/cache-write tokens, tool call count, cost with
@@ -70,7 +71,7 @@ order:
   The request detail surface must also expose the enriched fields when the
   provider has them: model path when multiple models were used, cache-write TTL
   split, cache diagnostics, prompt text, per-tool target preview/input
-  size/output size/latency/error status, subagent attribution, API-call count,
+  size/output size/latency/error status, subagent attribution, LLM-call count,
   stop reason, service tier or speed flags, output composition, wall time,
   idle-before timing, conversation-share indicators, reasoning output tokens,
   time-to-first-token, and provider-specific request metadata such as model

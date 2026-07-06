@@ -345,7 +345,7 @@ export async function parseClaudeSession(
         usage: { ...EMPTY_USAGE },
         cost: { usd: 0, source: 'estimated' },
         toolCallCount: 0,
-        apiCallCount: 0,
+        llmCallCount: 0,
         thinkingBlocks: 0,
         thinkingChars: 0,
         textChars: 0,
@@ -364,14 +364,14 @@ export async function parseClaudeSession(
       current.model = record.message?.model ?? current.model;
       if (record.message?.stop_reason) current.stopReason = record.message.stop_reason;
 
-      // One API response spans several lines sharing message.id, each
-      // repeating the same usage/diagnostics: count those once per id.
+      // One API response (one LLM call) spans several lines sharing message.id,
+      // each repeating the same usage/diagnostics: count those once per id.
       const messageId = record.message?.id;
-      const isNewApiCall = !messageId || messageId !== lastMessageId;
+      const isNewLlmCall = !messageId || messageId !== lastMessageId;
       lastMessageId = messageId;
-      if (isNewApiCall) {
+      if (isNewLlmCall) {
         current.usage = addUsage(current.usage, usageFromRecord(record));
-        current.apiCallCount = (current.apiCallCount ?? 0) + 1;
+        current.llmCallCount = (current.llmCallCount ?? 0) + 1;
 
         const usage = record.message?.usage;
         if (usage?.service_tier) current.serviceTier = usage.service_tier;
