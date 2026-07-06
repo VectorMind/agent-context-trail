@@ -23,16 +23,17 @@ export interface TokenSeriesMeta {
 }
 
 /**
- * Stack order (bottom → top). Colors come from the active VS Code theme's
- * chart tokens so the palette follows the user's theme in light and dark.
- * Identity is never color-alone: the legend, tooltips, and the detail
- * breakdown all carry the series names and exact values.
+ * Stack order (bottom → top). Token bars use a fixed higher-chroma palette
+ * so the series stay clean in both light and dark themes; this avoids some
+ * theme oranges reading muddy/brown in the webview. Identity is never
+ * color-alone: the legend, tooltips, and the detail breakdown all carry the
+ * series names and exact values.
  */
 export const TOKEN_SERIES: readonly TokenSeriesMeta[] = [
-  { key: 'cacheReadTokens', label: 'Cache read', color: 'var(--vscode-charts-blue)' },
-  { key: 'cacheCreationTokens', label: 'Cache write', color: 'var(--vscode-charts-purple)' },
-  { key: 'inputTokens', label: 'Input', color: 'var(--vscode-charts-orange)' },
-  { key: 'outputTokens', label: 'Output', color: 'var(--vscode-charts-green)' }
+  { key: 'cacheReadTokens', label: 'Cache read', color: '#72B4FF' },
+  { key: 'cacheCreationTokens', label: 'Cache write', color: '#C18CFF' },
+  { key: 'inputTokens', label: 'Input', color: '#FF8FB1' },
+  { key: 'outputTokens', label: 'Output', color: '#7FD88F' }
 ];
 
 export const COST_COLOR = 'var(--vscode-charts-red)';
@@ -651,7 +652,8 @@ function truncateLabel(text: string, max = 24): string {
 export function renderOverviewChart(
   container: HTMLElement,
   items: ConversationListItem[],
-  onSelect: (id: string) => void
+  onSelect: (id: string) => void,
+  selectedConversationId?: string
 ): void {
   container.innerHTML = '';
   if (items.length === 0) return;
@@ -741,12 +743,26 @@ export function renderOverviewChart(
   shown.forEach((item, i) => {
     const rowTop = OV_TOP + i * OV_ROW_H;
     const barY = rowTop + (OV_ROW_H - OV_BAR_H) / 2;
-    const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'button' });
+    const isSelected = item.id === selectedConversationId;
+    const group = svgEl('g', { class: `bar-group${isSelected ? ' selected' : ''}`, tabindex: 0, role: 'button' });
     group.setAttribute(
       'aria-label',
       `${item.title}: ${formatTokens(item.totalTokens)} tokens, ${item.requestCount} prompts,` +
         ` ${item.totalCostUsd !== undefined ? `estimated ${formatUsd(item.totalCostUsd)}` : 'cost unavailable'}. Press Enter to open.`
     );
+
+    if (isSelected) {
+      group.appendChild(
+        svgEl('rect', {
+          class: 'overview-selected',
+          x: 2,
+          y: rowTop + 1,
+          width: OV_WIDTH - 4,
+          height: OV_ROW_H - 2,
+          rx: 4
+        })
+      );
+    }
 
     const hit = svgEl('rect', {
       class: 'hit',

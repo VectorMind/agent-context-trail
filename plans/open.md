@@ -1,5 +1,29 @@
 # Open Packets
 
+- `plans/2026-07/06/copilot-parity` - planned 2026-07-06: implement Copilot
+  support in two tiers. Tier 1 (zero-config): parse local VS Code
+  `workspaceStorage/*/chatSessions` data for prompts, models, timings, tool
+  calls, errors, titles, premium-request multiplier, thinking tokens,
+  edited-file events. Tier 2 (opt-in): read the real token/cache data from
+  Copilot's own OpenTelemetry SQLite export (`agent-traces.db`, real schema
+  captured from `microsoft/vscode-copilot-chat` source in `plan.md`) via
+  `sql.js` (WASM, resolved `OP-006`) to get Claude/Codex-equivalent tokens
+  and `estimated` USD cost - gated entirely behind the user enabling
+  `github.copilot.chat.otel.dbSpanExporter.enabled` and running `Chat:
+  Export Agent Traces DB` themselves; the extension never flips that
+  setting or runs that command (contrast: Copilot Cost Tracker auto-enables
+  it). README documents the three manual setup steps. Adds the packet's
+  first disk-persisted artifact (an OTel span cache under
+  `context.globalStorageUri`), so `surfaces-and-privacy.md` gained active
+  retention enforcement (prune-on-write, logged, default 90 days /
+  `agentContextTrail.retentionDays`, configurable) and a new Storage Footer
+  requirement at the bottom of the panel reporting the extension's own
+  on-disk footprint - both added per the maintainer's direct request, not
+  deferred. `OP-005` (export file location + `chat_session_id`/`turn_index`
+  correlation) is maintainer-assisted: maintainer enables the setting and
+  runs the export, assistant inspects the resulting file read-only. See
+  `plan.md`.
+
 - `plans/2026-07/05/marketplace-release` - implemented and validated
   2026-07-05: marketplace packaging (icon + gallery banner + homepage/bugs in
   `package.json`, marketplace-facing README, `DEVELOPMENT.md`,

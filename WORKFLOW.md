@@ -40,6 +40,13 @@ change history in the related packet instead.
 
 Use `plans/` for dated work packets tied to a concrete task.
 
+Small edits do not always need a plan. Use a dated packet when the user asks
+for plan-driven work, initiates work as a tracked packet, or explicitly
+confirms a proposed plan before implementation starts.
+
+Do not create a plan packet for a small direct edit unless the user asks for
+one. Do not treat internal assistant planning as a reason to create a packet.
+
 Each packet should follow this shape:
 
 ```text
@@ -75,9 +82,9 @@ tracked decisions.
 
 ## Specification Checkpoint
 
-Every agreed plan needs a specification assessment before implementation starts,
-and every validated plan needs the assessment refreshed before the packet is
-marked done.
+Every user-initiated or user-confirmed plan needs a specification assessment
+before implementation starts, and every validated plan needs the assessment
+refreshed before the packet is marked done.
 
 At each checkpoint:
 

@@ -43,7 +43,7 @@ type LayoutId = 'A' | 'B' | 'C' | 'D';
 const DEFAULT_LAYOUT: LayoutId = 'D';
 type SortKey = 'title' | 'firstAt' | 'lastAt' | 'requestCount' | 'totalTokens' | 'totalCostUsd';
 type SortDir = 'asc' | 'desc';
-type SectionId = 'chart' | 'table' | 'status' | 'thread' | 'request';
+type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request';
 /** Tools table (Layout D request card): '#' is call order, not a sortable metric. */
 type ToolSortKey = 'order' | 'name' | 'target' | 'in' | 'out' | 'time';
 
@@ -54,15 +54,11 @@ const LAYOUTS: { id: LayoutId; label: string; hint: string }[] = [
 const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] = [
   { id: 'chart', title: 'Tokens per conversation', icon: '▦', hint: 'Token totals per conversation' },
   { id: 'table', title: 'Conversations', icon: '☰', hint: 'Sortable, filterable conversations table' },
+  { id: 'limits', title: 'Provider Limits', icon: '≡', hint: 'Provider plan and rate-limit usage' },
+  { id: 'context', title: 'Current Context Status', icon: '≣', hint: 'Selected conversation context occupancy' },
   { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
   { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' }
 ];
-SECTIONS.splice(2, 0, {
-  id: 'status',
-  title: 'Current Status',
-  icon: '≡',
-  hint: 'Provider limits and selected conversation context'
-});
 
 interface PersistedState {
   layout?: LayoutId;
@@ -73,6 +69,7 @@ interface State {
   providers: ProviderId[];
   conversationsByProvider: Partial<Record<ProviderId, ConversationListItem[]>>;
   selectedProvider: ProviderId;
+  workspacePath?: string;
   detail?: ConversationDetailPayload;
   listCollapsed: boolean;
   selectedRequestIndex?: number;
@@ -82,7 +79,6 @@ interface State {
   sortKey: SortKey;
   sortDir: SortDir;
   filter: string;
-  pathFilter: string;
   /** Layouts B and C: panels collapsed to their heading bar. */
   sectionsCollapsed: Partial<Record<SectionId, boolean>>;
   /** Layout D: tools table sort, shared across whichever request is selected. */
@@ -109,7 +105,6 @@ const state: State = {
   sortKey: 'lastAt',
   sortDir: 'desc',
   filter: '',
-  pathFilter: '',
   sectionsCollapsed: persisted?.sectionsCollapsed ?? {},
   toolsSortKey: 'order',
   toolsSortDir: 'asc',
@@ -172,17 +167,70 @@ function formatContextTokens(used: number | undefined, window: number | undefine
   return `${formatTokensCompact(used)} / ${formatTokensCompact(window)}`;
 }
 
-function statusSummaryText(status: CurrentStatusSnapshot | undefined): string {
-  if (!status) return 'unavailable';
-  const parts: string[] = [];
-  if (status.rateLimits?.primary?.usedPercent !== undefined) {
-    const prefix = status.rateLimits.planType ? `${status.rateLimits.planType} ` : '';
-    parts.push(`${prefix}${status.rateLimits.primary.usedPercent.toFixed(0)}%`);
+function formatWindowDuration(minutes: number | undefined): string | undefined {
+  if (minutes === undefined) return undefined;
+  if (minutes >= 24 * 60) {
+    const days = minutes / (24 * 60);
+    const rounded = Number.isInteger(days) ? days.toFixed(0) : days.toFixed(days < 10 ? 1 : 0);
+    const value = rounded.replace(/\.0$/, '');
+    return `${value} day${value === '1' ? '' : 's'}`;
   }
-  if (status.context?.contextFillPercent !== undefined) {
-    parts.push(`ctx ${status.context.contextFillPercent.toFixed(1)}%`);
+  if (minutes >= 60) {
+    const hours = minutes / 60;
+    const rounded = Number.isInteger(hours) ? hours.toFixed(0) : hours.toFixed(hours < 10 ? 1 : 0);
+    return `${rounded.replace(/\.0$/, '')} h`;
+  }
+  return `${minutes} min`;
+}
+
+function formatPercentValue(percent: number | undefined): string | undefined {
+  return percent === undefined ? undefined : `${percent.toFixed(1)}%`;
+}
+
+function limitsSummaryText(status: CurrentStatusSnapshot | undefined): string {
+  if (!status?.rateLimits) return 'unavailable';
+  const parts: string[] = [];
+  if (status.rateLimits.planType) parts.push(status.rateLimits.planType);
+  if (status.rateLimits.primary?.usedPercent !== undefined) {
+    parts.push(`${status.rateLimits.primary.usedPercent.toFixed(0)}% used`);
   }
   return parts.length > 0 ? parts.join(' · ') : 'unavailable';
+}
+
+function activeConversationId(): string | undefined {
+  return state.loadingId ?? state.detail?.id;
+}
+
+function contextSummaryText(status: CurrentStatusSnapshot | undefined): string {
+  if (!status?.context) return 'unavailable';
+  const used = status.context.contextUsedTokens;
+  const fill = status.context.contextFillPercent;
+  if (used !== undefined && fill !== undefined) {
+    return `${formatTokensCompact(used)} used · ${fill.toFixed(1)}%`;
+  }
+  if (fill !== undefined) return `${fill.toFixed(1)}% used`;
+  return 'unavailable';
+}
+
+function workspaceScopePath(): string | undefined {
+  return state.workspacePath ?? state.detail?.workspacePath;
+}
+
+function hasProviderLimits(provider: ProviderId, status: CurrentStatusSnapshot | undefined): boolean {
+  return provider !== 'claude' && !!status?.rateLimits;
+}
+
+function hasContextStatus(provider: ProviderId, status: CurrentStatusSnapshot | undefined): boolean {
+  return provider !== 'claude' && !!status?.context;
+}
+
+function visibleSections(): { id: SectionId; title: string; icon: string; hint: string }[] {
+  const status = state.detail?.currentStatus;
+  return SECTIONS.filter((section) => {
+    if (section.id === 'limits') return hasProviderLimits(state.selectedProvider, status);
+    if (section.id === 'context') return hasContextStatus(state.selectedProvider, status);
+    return true;
+  });
 }
 
 // ---- sorting / filtering ----------------------------------------------------
@@ -249,17 +297,13 @@ function visibleItems(): ConversationListItem[] {
   const items = [...(state.conversationsByProvider[state.selectedProvider] ?? [])];
   items.sort(compareItems);
   const titleNeedle = state.filter.trim().toLowerCase();
-  const pathNeedle = state.pathFilter.trim().toLowerCase();
-  return items.filter((item) => {
-    const titleMatch = !titleNeedle || item.title.toLowerCase().includes(titleNeedle);
-    const pathMatch = !pathNeedle || (item.pathLabel ?? '').toLowerCase().includes(pathNeedle);
-    return titleMatch && pathMatch;
-  });
+  return items.filter((item) => !titleNeedle || item.title.toLowerCase().includes(titleNeedle));
 }
 
 function openConversation(id: string): void {
   // Make sure the thread panel is expanded; the page itself must not move.
-  state.sectionsCollapsed.status = false;
+  state.sectionsCollapsed.limits = false;
+  state.sectionsCollapsed.context = false;
   state.sectionsCollapsed.thread = false;
   persistState();
 
@@ -355,6 +399,30 @@ function renderTabs(container: HTMLElement): void {
   container.appendChild(tabs);
 }
 
+function renderWorkspaceScope(container: HTMLElement): void {
+  const workspacePath = workspaceScopePath();
+  if (!workspacePath) return;
+
+  const block = document.createElement('div');
+  block.className = 'workspace-scope';
+
+  const label = document.createElement('div');
+  label.className = 'workspace-scope-label';
+  label.textContent = 'Workspace scope';
+
+  const path = document.createElement('div');
+  path.className = 'workspace-scope-path';
+  path.textContent = workspacePath;
+  path.title = workspacePath;
+
+  const note = document.createElement('div');
+  note.className = 'workspace-scope-note';
+  note.textContent = 'Showing only conversations from this workspace.';
+
+  block.append(label, path, note);
+  container.appendChild(block);
+}
+
 function emptyMessage(): string {
   if (state.selectedProvider === 'copilot') return 'Copilot support is not implemented yet.';
   return `No ${PROVIDER_LABELS[state.selectedProvider]} conversations found for this workspace yet.`;
@@ -405,7 +473,7 @@ function renderSidebarList(container: HTMLElement): void {
 
   for (const item of items) {
     const row = document.createElement('button');
-    row.className = 'conversation-item' + (item.id === state.detail?.id ? ' active' : '');
+    row.className = 'conversation-item' + (item.id === activeConversationId() ? ' active' : '');
     row.title = `${item.title}\nFirst: ${formatExact(item.firstAt)}\nLast: ${formatExact(item.lastAt)}`;
 
     const title = document.createElement('div');
@@ -414,9 +482,7 @@ function renderSidebarList(container: HTMLElement): void {
 
     const meta = document.createElement('div');
     meta.className = 'item-meta';
-    meta.textContent =
-      `${item.requestCount} prompt${item.requestCount === 1 ? '' : 's'} · ${formatShortDate(item.firstAt)} → ${formatRelative(item.lastAt)}` +
-      (item.pathLabel ? ` · ${item.pathLabel}` : '');
+    meta.textContent = `${item.requestCount} prompt${item.requestCount === 1 ? '' : 's'} · ${formatShortDate(item.firstAt)} → ${formatRelative(item.lastAt)}`;
 
     row.append(title, meta);
     row.addEventListener('click', () => {
@@ -545,25 +611,35 @@ function renderCurrentStatusSection(container: HTMLElement): void {
     block.className = 'status-block';
     block.appendChild(subHeading('Provider Limits'));
     const body = document.createElement('div');
-    body.className = 'diag';
-    if (status.rateLimits.planType) {
-      const row = document.createElement('div');
-      row.className = 'diag-row';
-      row.textContent = `plan ${status.rateLimits.planType}`;
-      body.appendChild(row);
+    body.className = 'status-card';
+    if (status.rateLimits.planType || status.rateLimits.limitId || status.rateLimits.rateLimitReachedType) {
+      const summary = document.createElement('div');
+      summary.className = 'status-card-summary';
+      const bits: string[] = [];
+      if (status.rateLimits.planType) bits.push(`plan ${status.rateLimits.planType}`);
+      if (status.rateLimits.limitId) bits.push(status.rateLimits.limitId);
+      if (status.rateLimits.rateLimitReachedType) bits.push(`reached ${status.rateLimits.rateLimitReachedType}`);
+      summary.textContent = bits.join(' · ');
+      body.appendChild(summary);
     }
     for (const [label, window] of [
       ['Primary', status.rateLimits.primary],
       ['Secondary', status.rateLimits.secondary]
     ] as const) {
       if (!window) continue;
-      const row = document.createElement('div');
-      row.className = 'diag-row';
-      const bits = [`${label.toLowerCase()} ${window.usedPercent?.toFixed(1) ?? 'n/a'}%`];
-      if (window.windowMinutes !== undefined) bits.push(`${window.windowMinutes} min`);
+      const bits: string[] = [];
+      const windowDuration = formatWindowDuration(window.windowMinutes);
+      if (windowDuration) bits.push(windowDuration);
       if (window.resetsAt) bits.push(`resets ${formatExact(window.resetsAt)}`);
-      row.textContent = bits.join(' · ');
-      body.appendChild(row);
+      body.appendChild(
+        statusMeterRow({
+          label,
+          value: window.usedPercent !== undefined ? `${formatPercentValue(window.usedPercent)} used` : 'unavailable',
+          fillPercent: window.usedPercent,
+          tone: limitTone(window.usedPercent),
+          meta: bits.join(' · ')
+        })
+      );
     }
     block.appendChild(body);
     container.appendChild(block);
@@ -574,33 +650,316 @@ function renderCurrentStatusSection(container: HTMLElement): void {
     block.className = 'status-block';
     block.appendChild(subHeading('Current Context Status'));
     const body = document.createElement('div');
-    body.className = 'diag';
-    appendStatusRow(body, 'Path', status.context.workspacePath);
-    appendStatusRow(body, 'Model', status.context.model ? shortModelName(status.context.model) : undefined);
-    appendStatusRow(body, 'Context fill', formatContextPercent(status.context.contextFillPercent));
-    appendStatusRow(body, 'Window', formatContextTokens(status.context.contextUsedTokens, status.context.modelContextWindow));
-    appendStatusRow(
-      body,
+    body.className = 'status-card';
+    if (status.context.model) {
+      const summary = document.createElement('div');
+      summary.className = 'status-card-summary';
+      summary.textContent = shortModelName(status.context.model);
+      body.appendChild(summary);
+    }
+    body.appendChild(
+      statusMeterRow({
+        label: 'Context fill',
+        value:
+          status.context.contextFillPercent !== undefined
+            ? `${formatPercentValue(status.context.contextFillPercent)} used`
+            : 'unavailable',
+        fillPercent: status.context.contextFillPercent,
+        tone: limitTone(status.context.contextFillPercent),
+        meta: formatContextTokens(status.context.contextUsedTokens, status.context.modelContextWindow)
+      })
+    );
+
+    const facts = document.createElement('div');
+    facts.className = 'status-facts';
+    appendStatusFact(
+      facts,
+      'Window',
+      status.context.modelContextWindow !== undefined ? formatTokensCompact(status.context.modelContextWindow) : undefined
+    );
+    appendStatusFact(
+      facts,
+      'In use',
+      status.context.contextUsedTokens !== undefined ? formatTokensCompact(status.context.contextUsedTokens) : undefined
+    );
+    appendStatusFact(
+      facts,
       'Available',
       status.context.contextAvailableTokens !== undefined ? formatTokensCompact(status.context.contextAvailableTokens) : undefined
     );
-    appendStatusRow(
-      body,
+    appendStatusFact(
+      facts,
       'Reserved output',
       status.context.reservedOutputTokens !== undefined ? formatTokensCompact(status.context.reservedOutputTokens) : undefined
     );
-    appendStatusRow(body, 'Mode', status.context.longContextMode);
+    appendStatusFact(facts, 'Mode', status.context.longContextMode);
+    if (facts.childElementCount > 0) body.appendChild(facts);
     block.appendChild(body);
     container.appendChild(block);
   }
 }
 
-function appendStatusRow(container: HTMLElement, label: string, value: string | undefined): void {
-  if (!value) return;
+function renderProviderLimitsSection(container: HTMLElement): void {
+  const detail = state.detail;
+  if (!detail) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Select a conversation to inspect provider limits.';
+    container.appendChild(empty);
+    return;
+  }
+
+  const status = detail.currentStatus;
+  if (!status?.rateLimits) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = `No provider limits were recorded for ${PROVIDER_LABELS[detail.provider]}.`;
+    container.appendChild(empty);
+    return;
+  }
+
+  const block = document.createElement('div');
+  block.className = 'status-block';
+  const body = document.createElement('div');
+  body.className = 'status-card';
+  if (status.rateLimits.planType || status.rateLimits.limitId || status.rateLimits.rateLimitReachedType) {
+    const summary = document.createElement('div');
+    summary.className = 'status-card-summary';
+    const bits: string[] = [];
+    if (status.rateLimits.planType) bits.push(`plan ${status.rateLimits.planType}`);
+    if (status.rateLimits.limitId) bits.push(status.rateLimits.limitId);
+    if (status.rateLimits.rateLimitReachedType) bits.push(`reached ${status.rateLimits.rateLimitReachedType}`);
+    summary.textContent = bits.join(' · ');
+    body.appendChild(summary);
+  }
+
+  for (const window of [status.rateLimits.primary, status.rateLimits.secondary]) {
+    if (!window) continue;
+    const bits: string[] = [];
+    const windowDuration = formatWindowDuration(window.windowMinutes);
+    if (windowDuration) bits.push(windowDuration);
+    if (window.resetsAt) bits.push(`resets ${formatExact(window.resetsAt)}`);
+    body.appendChild(
+      compactStatusMeter({
+        usedText: window.usedPercent !== undefined ? `${formatPercentValue(window.usedPercent)} used` : 'used unavailable',
+        remainingText:
+          window.usedPercent !== undefined ? `${formatPercentValue(Math.max(0, 100 - window.usedPercent))} remaining` : undefined,
+        fillPercent: window.usedPercent,
+        tone: limitTone(window.usedPercent),
+        meta: bits.join(' · ')
+      })
+    );
+  }
+
+  block.appendChild(body);
+  container.appendChild(block);
+}
+
+function renderContextStatusSection(container: HTMLElement): void {
+  const detail = state.detail;
+  if (!detail) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Select a conversation to inspect current context status.';
+    container.appendChild(empty);
+    return;
+  }
+
+  const status = detail.currentStatus;
+  if (!status?.context) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = `No context status was recorded for ${PROVIDER_LABELS[detail.provider]}.`;
+    container.appendChild(empty);
+    return;
+  }
+
+  const block = document.createElement('div');
+  block.className = 'status-block';
+  const body = document.createElement('div');
+  body.className = 'status-card';
+  if (status.context.model) {
+    const summary = document.createElement('div');
+    summary.className = 'status-card-summary';
+    summary.textContent = shortModelName(status.context.model);
+    body.appendChild(summary);
+  }
+
+  const usedTokens = status.context.contextUsedTokens;
+  const windowTokens = status.context.modelContextWindow;
+  const remainingTokens =
+    usedTokens !== undefined && windowTokens !== undefined ? Math.max(windowTokens - usedTokens, 0) : status.context.contextAvailableTokens;
+  body.appendChild(
+    compactStatusMeter({
+      usedText:
+        usedTokens !== undefined && status.context.contextFillPercent !== undefined
+          ? `Used ${formatTokensCompact(usedTokens)} - ${formatPercentValue(status.context.contextFillPercent)}`
+          : 'Used unavailable',
+      remainingText:
+        remainingTokens !== undefined && status.context.contextFillPercent !== undefined
+          ? `Remaining ${formatTokensCompact(remainingTokens)} - ${formatPercentValue(
+              Math.max(0, 100 - status.context.contextFillPercent)
+            )}`
+          : undefined,
+      fillPercent: status.context.contextFillPercent,
+      tone: limitTone(status.context.contextFillPercent),
+      meta: formatContextTokens(status.context.contextUsedTokens, status.context.modelContextWindow)
+    })
+  );
+
+  const facts = document.createElement('div');
+  facts.className = 'status-facts';
+  appendStatusFact(
+    facts,
+    'Window',
+    status.context.modelContextWindow !== undefined ? formatTokensCompact(status.context.modelContextWindow) : undefined
+  );
+  appendStatusFact(
+    facts,
+    'In use',
+    status.context.contextUsedTokens !== undefined ? formatTokensCompact(status.context.contextUsedTokens) : undefined
+  );
+  appendStatusFact(
+    facts,
+    'Available',
+    status.context.contextAvailableTokens !== undefined ? formatTokensCompact(status.context.contextAvailableTokens) : undefined
+  );
+  appendStatusFact(
+    facts,
+    'Reserved output',
+    status.context.reservedOutputTokens !== undefined ? formatTokensCompact(status.context.reservedOutputTokens) : undefined
+  );
+  appendStatusFact(facts, 'Mode', status.context.longContextMode);
+  if (facts.childElementCount > 0) body.appendChild(facts);
+  block.appendChild(body);
+  container.appendChild(block);
+}
+
+function limitTone(percent: number | undefined): 'ok' | 'warn' | 'danger' | 'neutral' {
+  if (percent === undefined) return 'neutral';
+  if (percent >= 90) return 'danger';
+  if (percent >= 70) return 'warn';
+  return 'ok';
+}
+
+function statusMeterRow(args: {
+  label: string;
+  value: string;
+  fillPercent?: number;
+  meta?: string;
+  tone?: 'ok' | 'warn' | 'danger' | 'neutral';
+}): HTMLElement {
   const row = document.createElement('div');
-  row.className = 'diag-row';
-  row.textContent = `${label} · ${value}`;
-  container.appendChild(row);
+  row.className = 'status-meter';
+
+  const head = document.createElement('div');
+  head.className = 'status-meter-head';
+
+  const label = document.createElement('span');
+  label.className = 'status-meter-label';
+  label.textContent = args.label;
+
+  const value = document.createElement('span');
+  value.className = 'status-meter-value';
+  value.textContent = args.value;
+
+  head.append(label, value);
+  row.appendChild(head);
+
+  const track = document.createElement('div');
+  track.className = `status-meter-track ${args.tone ?? 'neutral'}`;
+  const fill = document.createElement('div');
+  fill.className = 'status-meter-fill';
+  fill.style.width =
+    args.fillPercent !== undefined ? `${Math.min(Math.max(args.fillPercent, 0), 100)}%` : '0%';
+  track.appendChild(fill);
+  row.appendChild(track);
+
+  if (args.meta) {
+    const footer = document.createElement('div');
+    footer.className = 'status-meter-footer';
+
+    const meta = document.createElement('div');
+    meta.className = 'status-meter-meta';
+    meta.textContent = args.meta;
+    footer.appendChild(meta);
+
+    if (args.fillPercent !== undefined) {
+      const remaining = document.createElement('div');
+      remaining.className = 'status-meter-remaining';
+      remaining.textContent = `${formatPercentValue(Math.max(0, 100 - args.fillPercent))} remaining`;
+      footer.appendChild(remaining);
+    }
+
+    row.appendChild(footer);
+  } else if (args.fillPercent !== undefined) {
+    const remaining = document.createElement('div');
+    remaining.className = 'status-meter-remaining solo';
+    remaining.textContent = `${formatPercentValue(Math.max(0, 100 - args.fillPercent))} remaining`;
+    row.appendChild(remaining);
+  }
+
+  return row;
+}
+
+function compactStatusMeter(args: {
+  usedText: string;
+  remainingText?: string;
+  fillPercent?: number;
+  meta?: string;
+  tone?: 'ok' | 'warn' | 'danger' | 'neutral';
+}): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'status-meter compact';
+
+  const head = document.createElement('div');
+  head.className = 'status-meter-head';
+
+  const used = document.createElement('span');
+  used.className = 'status-meter-value status-meter-side';
+  used.textContent = args.usedText;
+
+  const remaining = document.createElement('span');
+  remaining.className = 'status-meter-remaining top';
+  remaining.textContent = args.remainingText ?? 'remaining unavailable';
+
+  head.append(used, remaining);
+  row.appendChild(head);
+
+  const track = document.createElement('div');
+  track.className = `status-meter-track ${args.tone ?? 'neutral'}`;
+  const fill = document.createElement('div');
+  fill.className = 'status-meter-fill';
+  fill.style.width =
+    args.fillPercent !== undefined ? `${Math.min(Math.max(args.fillPercent, 0), 100)}%` : '0%';
+  track.appendChild(fill);
+  row.appendChild(track);
+
+  if (args.meta) {
+    const meta = document.createElement('div');
+    meta.className = 'status-meter-meta';
+    meta.textContent = args.meta;
+    row.appendChild(meta);
+  }
+
+  return row;
+}
+
+function appendStatusFact(container: HTMLElement, label: string, value: string | undefined): void {
+  if (!value) return;
+  const fact = document.createElement('div');
+  fact.className = 'status-fact';
+
+  const factLabel = document.createElement('span');
+  factLabel.className = 'status-fact-label';
+  factLabel.textContent = label;
+
+  const factValue = document.createElement('span');
+  factValue.className = 'status-fact-value';
+  factValue.textContent = value;
+
+  fact.append(factLabel, factValue);
+  container.appendChild(fact);
 }
 
 /** Label · horizontal bar · exact value; the bar wears the series color, text wears text tokens. */
@@ -1207,13 +1566,13 @@ function renderTable(container: HTMLElement, items: ConversationListItem[]): voi
   const tbody = document.createElement('tbody');
   for (const item of items) {
     const tr = document.createElement('tr');
-    tr.className = item.id === state.detail?.id ? 'active' : '';
+    tr.className = item.id === activeConversationId() ? 'active' : '';
     tr.tabIndex = 0;
     tr.setAttribute('role', 'button');
     tr.setAttribute('aria-label', `Open conversation: ${item.title}`);
 
     const cells: { text: string; tooltip?: string; numeric?: boolean; className?: string }[] = [
-      { text: item.title, tooltip: item.pathLabel ? `${item.title}\n${item.pathLabel}` : item.title, className: 'cell-title' },
+      { text: item.title, tooltip: item.title, className: 'cell-title' },
       { text: String(item.requestCount), numeric: true },
       { text: formatShortDate(item.firstAt), tooltip: formatExact(item.firstAt) },
       { text: formatRelative(item.lastAt), tooltip: formatExact(item.lastAt) },
@@ -1268,8 +1627,11 @@ function sectionSummary(id: SectionId, items: ConversationListItem[]): string {
       ? `${total} conversation${total === 1 ? '' : 's'}`
       : `${items.length} of ${total} conversations`;
   }
-  if (id === 'status') {
-    return statusSummaryText(state.detail?.currentStatus);
+  if (id === 'limits') {
+    return limitsSummaryText(state.detail?.currentStatus);
+  }
+  if (id === 'context') {
+    return contextSummaryText(state.detail?.currentStatus);
   }
   if (id === 'thread') {
     if (state.loadingId && state.detail?.id !== state.loadingId) return 'loading…';
@@ -1296,7 +1658,7 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
       body.appendChild(empty);
       return;
     }
-    renderOverviewChart(body, items, (convId) => openConversation(convId));
+    renderOverviewChart(body, items, (convId) => openConversation(convId), activeConversationId());
     return;
   }
 
@@ -1313,19 +1675,6 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
     count.className = 'overview-count';
     count.textContent = sectionSummary('table', items);
     toolbar.append(filter);
-    if ((state.conversationsByProvider[state.selectedProvider] ?? []).some((item) => !!item.pathLabel)) {
-      const pathFilter = document.createElement('input');
-      pathFilter.type = 'search';
-      pathFilter.className = 'filter-input';
-      pathFilter.placeholder = 'Filter by path…';
-      pathFilter.value = state.pathFilter;
-      pathFilter.setAttribute('aria-label', 'Filter conversations by path');
-      pathFilter.addEventListener('input', () => {
-        state.pathFilter = pathFilter.value;
-        refreshStackData();
-      });
-      toolbar.appendChild(pathFilter);
-    }
     toolbar.appendChild(count);
     body.appendChild(toolbar);
 
@@ -1342,8 +1691,13 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
     return;
   }
 
-  if (id === 'status') {
-    renderCurrentStatusSection(body);
+  if (id === 'limits') {
+    renderProviderLimitsSection(body);
+    return;
+  }
+
+  if (id === 'context') {
+    renderContextStatusSection(body);
     return;
   }
 
@@ -1405,7 +1759,7 @@ function toggleSection(id: SectionId): void {
 function renderSideBar(container: HTMLElement): void {
   const bar = document.createElement('div');
   bar.className = 'side-bar';
-  for (const section of SECTIONS) {
+  for (const section of visibleSections()) {
     const collapsed = !!state.sectionsCollapsed[section.id];
     const button = document.createElement('button');
     button.className = 'side-icon' + (collapsed ? '' : ' active');
@@ -1426,11 +1780,12 @@ function renderStack(container: HTMLElement, layout: 'B' | 'C' | 'D'): void {
 
   const stack = document.createElement('div');
   stack.className = 'stack-pane';
+  renderWorkspaceScope(stack);
   renderTabs(stack);
 
   const items = visibleItems();
 
-  for (const section of SECTIONS) {
+  for (const section of visibleSections()) {
     const collapsed = !!state.sectionsCollapsed[section.id];
 
     const sectionEl = document.createElement('section');
@@ -1473,9 +1828,21 @@ function renderStack(container: HTMLElement, layout: 'B' | 'C' | 'D'): void {
   container.appendChild(stack);
 }
 
-function selectLastRequest(detail: ConversationDetailPayload | undefined): void {
+function applyDetail(detail: ConversationDetailPayload | undefined, preserveSelection: boolean): void {
+  const sameConversation =
+    preserveSelection &&
+    !!detail &&
+    !!state.detail &&
+    detail.provider === state.detail.provider &&
+    detail.id === state.detail.id;
+  const previousRequestIndex = sameConversation ? state.selectedRequestIndex : undefined;
   state.detail = detail;
-  state.selectedRequestIndex = detail && detail.requests.length > 0 ? detail.requests.length - 1 : undefined;
+  state.selectedRequestIndex =
+    detail && detail.requests.length > 0
+      ? previousRequestIndex !== undefined
+        ? Math.min(previousRequestIndex, detail.requests.length - 1)
+        : detail.requests.length - 1
+      : undefined;
   state.loadingId = undefined;
   state.promptExpanded = false;
   if (detail) state.selectedProvider = detail.provider;
@@ -1510,11 +1877,12 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
   const message = event.data;
   if (message.type === 'init') {
     state.providers = message.providers;
+    state.workspacePath = message.workspacePath;
     state.conversationsByProvider = message.conversationsByProvider;
-    selectLastRequest(message.selected);
+    applyDetail(message.selected, true);
     render();
   } else if (message.type === 'conversationDetail') {
-    selectLastRequest(message.detail);
+    applyDetail(message.detail, false);
     render();
   }
 });

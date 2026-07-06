@@ -16,6 +16,7 @@ export class PanelController implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private ready = false;
   private workspacePath: string | undefined;
+  private selectedConversation: { provider: ProviderId; id: string } | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext, private readonly pricing: PricingService) {}
 
@@ -47,8 +48,15 @@ export class PanelController implements vscode.Disposable {
     this.panel.onDidDispose(() => {
       this.panel = undefined;
       this.ready = false;
+      this.selectedConversation = undefined;
     });
     this.panel.webview.onDidReceiveMessage((message: WebviewToHostMessage) => this.handleMessage(message));
+  }
+
+  async refresh(workspacePath: string | undefined): Promise<void> {
+    this.workspacePath = workspacePath;
+    if (!this.panel || !this.ready) return;
+    await this.sendInit();
   }
 
   private post(message: HostToWebviewMessage): void {
@@ -62,6 +70,7 @@ export class PanelController implements vscode.Disposable {
       return;
     }
     if (message.type === 'selectConversation') {
+      this.selectedConversation = { provider: message.provider, id: message.id };
       const detail = await this.loadDetail(message.provider, message.id);
       if (detail) this.post({ type: 'conversationDetail', detail });
     }
@@ -80,12 +89,14 @@ export class PanelController implements vscode.Disposable {
       codex: codexItems,
       copilot: []
     };
-    const latest = this.findLatestConversation(conversationsByProvider);
-    const selected = latest ? await this.loadDetail(latest.provider, latest.item.id) : undefined;
+    const selectedRef = this.findSelectedConversation(conversationsByProvider);
+    const selected = selectedRef ? await this.loadDetail(selectedRef.provider, selectedRef.item.id) : undefined;
+    this.selectedConversation = selected ? { provider: selected.provider, id: selected.id } : undefined;
 
     this.post({
       type: 'init',
       providers: PROVIDERS,
+      workspacePath,
       conversationsByProvider,
       selected
     });
@@ -130,6 +141,18 @@ export class PanelController implements vscode.Disposable {
     }
 
     return undefined;
+  }
+
+  private findSelectedConversation(
+    conversationsByProvider: Partial<Record<ProviderId, ConversationListItem[]>>
+  ): { provider: ProviderId; item: ConversationListItem } | undefined {
+    const selected = this.selectedConversation;
+    if (selected) {
+      const items = conversationsByProvider[selected.provider] ?? [];
+      const match = items.find((item) => item.id === selected.id);
+      if (match) return { provider: selected.provider, item: match };
+    }
+    return this.findLatestConversation(conversationsByProvider);
   }
 
   private findLatestConversation(
@@ -336,6 +359,38 @@ export class PanelController implements vscode.Disposable {
   }
   .stack-pane .tabs { margin: -8px -10px 8px; }
 
+  .workspace-scope {
+    margin: 0 0 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    background:
+      linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--vscode-focusBorder) 10%, transparent),
+        color-mix(in srgb, var(--vscode-badge-background) 18%, transparent)
+      );
+  }
+  .workspace-scope-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--vscode-descriptionForeground);
+  }
+  .workspace-scope-path {
+    margin-top: 4px;
+    font-family: var(--vscode-editor-font-family, var(--vscode-font-family, monospace));
+    font-size: 12px;
+    color: var(--vscode-foreground);
+    word-break: break-all;
+  }
+  .workspace-scope-note {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+  }
+
   /* Each panel is a clearly bounded block: contrasted heading bar on top,
      bordered body below; collapsed = heading bar only. */
   .section {
@@ -475,6 +530,11 @@ export class PanelController implements vscode.Disposable {
   .bar-group:hover .seg { filter: brightness(1.18); }
   .bar-group:focus { outline: none; }
   .bar-group:focus .hit { stroke: var(--vscode-focusBorder); stroke-width: 1.5; }
+  .overview-selected {
+    fill: color-mix(in srgb, var(--vscode-list-activeSelectionBackground) 32%, transparent);
+    stroke: var(--vscode-list-activeSelectionBackground);
+    stroke-width: 1;
+  }
 
   .chart-tooltip {
     position: absolute;
@@ -603,6 +663,108 @@ export class PanelController implements vscode.Disposable {
 
   .composition { font-size: 11px; color: var(--vscode-foreground); }
   .status-block + .status-block { margin-top: 12px; }
+  .status-card {
+    border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: color-mix(in srgb, var(--vscode-editorWidget-background, var(--vscode-editor-background)) 72%, transparent);
+  }
+  .status-card-summary {
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--vscode-foreground);
+    font-weight: 600;
+  }
+  .status-meter + .status-meter { margin-top: 10px; }
+  .status-meter-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 11px;
+  }
+  .status-meter-label { color: var(--vscode-descriptionForeground); }
+  .status-meter-value {
+    color: var(--vscode-foreground);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .status-meter-side { white-space: nowrap; }
+  .status-meter-track {
+    margin-top: 5px;
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--vscode-panel-border) 45%, transparent);
+  }
+  .status-meter-track.ok .status-meter-fill {
+    background: linear-gradient(90deg, #3fa86b, #7fd88f);
+  }
+  .status-meter-track.warn .status-meter-fill {
+    background: linear-gradient(90deg, #d7a129, #f3c76a);
+  }
+  .status-meter-track.danger .status-meter-fill {
+    background: linear-gradient(90deg, #c95757, #ff8f8f);
+  }
+  .status-meter-track.neutral .status-meter-fill {
+    background: linear-gradient(90deg, var(--vscode-progressBar-background), color-mix(in srgb, var(--vscode-focusBorder) 62%, white));
+  }
+  .status-meter-fill {
+    height: 100%;
+    min-width: 0;
+    border-radius: inherit;
+  }
+  .status-meter-meta {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+  }
+  .status-meter-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .status-meter-remaining {
+    font-size: 10px;
+    color: var(--vscode-foreground);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .status-meter-remaining.top { text-align: right; }
+  .status-meter-remaining.solo {
+    display: block;
+    margin-top: 4px;
+    text-align: right;
+  }
+  .status-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .status-fact {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 9px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--vscode-editor-background) 82%, transparent);
+    border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 45%, transparent);
+  }
+  .status-fact-label {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .status-fact-value {
+    font-size: 12px;
+    color: var(--vscode-foreground);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
 
   .tools-scroll { max-height: 300px; overflow-y: auto; }
   .tools-table { font-size: 11px; }

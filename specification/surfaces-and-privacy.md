@@ -30,22 +30,32 @@ The panel is one vertically scrollable page of stacked panels plus a VS
 Code-style side app bar. It must provide, at minimum, these panels in this
 order:
 
+- **Workspace scope** - shown once near the top of the panel, naming the
+  current workspace path explicitly and making clear that every conversation
+  row below is already filtered to that workspace only.
 - **Tokens per conversation** - one horizontal stacked token bar per
   conversation (per-kind composition, no cost on the token axis; cost may
   appear in tooltips).
 - **Conversations table** - scoped to the current workspace, grouped by
   provider (Copilot, Codex, Claude), titled as the respective CLI or VS Code
   would label them, with per-conversation metadata columns: request count,
-  first message, last message, total tokens, estimated cost. Every column
-  sorts on heading click; default order is last message, newest first. A
-  title filter narrows the table without stealing focus.
-- **Current Status** - live status for the current provider and selected
-  conversation. This surface may combine provider-global status such as
-  rate-limit windows with selected-conversation status such as context
-  occupancy, total context capacity, reserved-for-output budget, and
-  long-context or expensive-context mode when available. The section may be
-  collapsible, but it must stay distinct from both the conversation table and
-  request detail.
+  first message, last message, total tokens, estimated cost. Do not repeat
+  per-conversation workspace-path labels in this table once the top workspace
+  scope is shown. Every column sorts on heading click; default order is last
+  message, newest first. A title filter narrows the table without stealing
+  focus.
+- **Provider Limits** - a distinct panel above context status for
+  provider-global status such as rate-limit windows or plan usage. The meter
+  header must place used on the left and remaining on the right, and the bar
+  itself must still read only as used/fill rather than as two competing
+  fills. Providers that do not expose real provider-limit data do not render
+  a placeholder Provider Limits panel.
+- **Current Context Status** - a distinct panel for selected-conversation
+  context occupancy, total context capacity, reserved-for-output budget, and
+  long-context or expensive-context mode when available. Its header should
+  present both token and percentage values for used and remaining when the
+  provider exposes them. Providers that do not expose a real current-context
+  surface do not render a placeholder Current Context Status panel.
 - **Conversation (thread view)** - the selected conversation, containing:
   - a chart with one visual unit per request, showing that request's token
     composition and cost, scaled to the conversation's own range rather than a
@@ -95,6 +105,24 @@ detail are shown. The status bar may surface only the limited passive
 current-context readout described above; it must not duplicate full panel
 detail.
 
+### Storage Footer
+
+Below Request Detail, at the bottom of the page, the panel shows a small,
+non-collapsible footer reporting the extension's own on-disk footprint - not
+one of the "at minimum" panels above, and not subject to their collapse
+rules. It exists so the retention contract below is a visible fact, not a
+buried policy.
+
+- Reports total bytes currently used by artifacts the extension itself wrote
+  (see "Data Retention"), the active retention window, and a link to change
+  it in settings.
+- Reads "no local data stored" (or equivalent) when the extension has
+  written nothing, which is the default state as long as every adapter stays
+  in-memory-only.
+- Never includes the size of provider-owned files the extension merely reads
+  (a provider's session logs, a user's own OTel export) - only what the
+  extension created.
+
 ## Privacy
 
 - Local-first: all data is read from local files the provider CLIs already
@@ -104,3 +132,36 @@ detail.
 - Any data the extension retains beyond a single read, such as for a future
   feature needing state the provider does not persist itself, must be stored
   locally, scoped to the extension, and never synced off-machine.
+- The extension must never programmatically write to VS Code settings (its
+  own, another extension's, or a provider's, such as Copilot's OTel exporter
+  settings) to unlock richer data. Enabling such a setting is the user's
+  decision alone. The extension may detect that a setting is off and explain
+  what turning it on would unlock, but it must stop at detection and
+  explanation, never write the setting itself.
+
+### Data Retention
+
+Any artifact the extension persists beyond a single read (a derived cache, an
+index, an exported copy of provider telemetry) is bounded, not indefinite.
+
+- Default retention is **3 months** from the data's own timestamp, not from
+  when the extension last read or touched it.
+- The retention window is user-configurable; the 3-month default holds until
+  the user changes it.
+- The extension prunes only artifacts it created itself. It never deletes or
+  modifies a provider's own files (session logs, another extension's export,
+  a provider-written telemetry database) even once they are past the
+  configured window - retention pruning is scoped strictly to the extension's
+  own persisted state.
+- This rule is dormant until the extension's first persisted artifact ships;
+  purely in-memory caches that clear on restart (the discovery mtime caches
+  used by the Claude and Codex adapters today) do not trigger it.
+- Enforcement is active, not aspirational: every write path prunes entries
+  past the configured window before or immediately after writing, so total
+  footprint cannot grow unbounded between prunes ("no leak" - size is
+  bounded by retention window x write rate, never by how long the extension
+  has been installed).
+- Every prune action is logged to the extension's output channel (what was
+  removed, its age, bytes freed) so retention is observable, not silent.
+- The current total footprint is surfaced in the panel's Storage Footer
+  (see "Panel" above), not just internal logs.

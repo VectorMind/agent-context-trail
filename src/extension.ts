@@ -26,6 +26,7 @@ async function refresh(): Promise<void> {
   if (!workspacePath) {
     currentSummary = undefined;
     statusBar.update(undefined);
+    await panelController.refresh(undefined);
     return;
   }
 
@@ -34,9 +35,11 @@ async function refresh(): Promise<void> {
     if (!currentSummary) {
       currentSummary = undefined;
       statusBar.update(undefined);
+      await panelController.refresh(workspacePath);
       return;
     }
     statusBar.update(currentSummary);
+    await panelController.refresh(workspacePath);
   } catch (err) {
     outputChannel.appendLine(`[refresh] failed: ${(err as Error).stack ?? String(err)}`);
   }

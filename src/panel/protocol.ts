@@ -23,6 +23,7 @@ export type HostToWebviewMessage =
   | {
       type: 'init';
       providers: ProviderId[];
+      workspacePath?: string;
       conversationsByProvider: Partial<Record<ProviderId, ConversationListItem[]>>;
       selected?: ConversationDetailPayload;
     }
