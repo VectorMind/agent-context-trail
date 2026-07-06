@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.1 - unreleased
+## 0.0.1 - 05.07.2026
 
 First marketplace release.
 

@@ -1,16 +1,20 @@
 # Open Packets
 
-- `plans/2026-07/06/tool-timeline` - planned 2026-07-06: per-tool-call chart
-  in the enriched request card - one column per call (matching the Tools
-  table's `#` order), aligned In/Out/Time lanes in the existing Layout D
-  lane language, plus a section title rename. Verified against real local
-  files: Claude and Codex have per-call timing already parsed into
-  `ToolCallInfo`; Copilot has round-granular starts and no per-call
-  durations, so its Time lane is honestly unavailable. No parser or domain
-  changes needed. OP-001..OP-004 resolved same day by maintainer: sequence
-  lanes; a **new "Prompt timeline" section** ("Prompt detail" stays exactly
-  as is); breakdown/chart/table stack preserved; linear scale. Ready to
-  implement. See `plan.md`.
+- `plans/2026-07/06/tool-timeline` - planned and implemented 2026-07-06: a
+  new **"Prompt timeline" section** ("Prompt detail" stays exactly as is,
+  title included) with a per-tool-call chart - one column per call
+  (matching the Tools table's `#` order), aligned IN/OUT/TIME lanes never
+  sharing a scale, bars colored by tool name via the same `categoryColorMap`
+  assignment as the sibling "Tool activity" breakdown. No parser or domain
+  changes (nothing new to parse). OP-001..OP-004 resolved same day by
+  maintainer: sequence lanes; the new section; breakdown/chart/table stack
+  preserved; linear scale with a direct label on each lane's max column.
+  OP-005 (chart↔table click interaction) stays out of scope. Validated
+  against real local Claude (110-call), Codex (102-call), and Copilot
+  (6-call, TIME genuinely unavailable) sessions via a headless-browser
+  harness, light + dark; a real caption-clipping bug on narrow (few-call)
+  prompts was caught and fixed during that pass. See `plan.md`,
+  `implementation.md`, `test.md`.
 
 - `plans/2026-07/06/copilot-parity` - planned and implemented 2026-07-06,
   revised same day after empirical correction: Copilot support from local VS Code

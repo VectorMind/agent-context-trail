@@ -7,6 +7,7 @@ import {
   gapBeforeMs,
   renderChart,
   renderOverviewChart,
+  renderToolCallLanes,
   shortModelName,
   OVERVIEW_CHART_MAX_ROWS,
   TOKEN_SERIES,
@@ -43,7 +44,7 @@ type LayoutId = 'A' | 'B' | 'C' | 'D';
 const DEFAULT_LAYOUT: LayoutId = 'D';
 type SortKey = 'title' | 'firstAt' | 'lastAt' | 'requestCount' | 'totalTokens' | 'totalCostUsd';
 type SortDir = 'asc' | 'desc';
-type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request';
+type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline';
 /** Tools table (Layout D request card): '#' is call order, not a sortable metric. */
 type ToolSortKey = 'order' | 'name' | 'target' | 'in' | 'out' | 'time';
 
@@ -57,7 +58,8 @@ const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] =
   { id: 'table', title: 'Conversations', icon: '☰', hint: 'Sortable, filterable conversations table' },
   { id: 'context', title: 'Current Context Status', icon: '≣', hint: 'Selected conversation context occupancy' },
   { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
-  { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' }
+  { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' },
+  { id: 'toolTimeline', title: 'Prompt timeline', icon: '▥', hint: 'Per-call in/out/time bars for the selected prompt' }
 ];
 
 interface PersistedState {
@@ -321,6 +323,7 @@ function openConversation(id: string): void {
 function selectRequest(index: number): void {
   state.selectedRequestIndex = index;
   state.sectionsCollapsed.request = false;
+  state.sectionsCollapsed.toolTimeline = false;
   state.promptExpanded = false;
   persistState();
   render();
@@ -1660,6 +1663,14 @@ function sectionSummary(id: SectionId, items: ConversationListItem[]): string {
       tokenTotal(detail.totalUsage)
     )} tokens · ${formatUsd(detail.totalCost.usd)}`;
   }
+  if (id === 'toolTimeline') {
+    const detail = state.detail;
+    const request = detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
+    if (!request) return 'none selected';
+    if (!request.tools?.length) return 'no tool calls';
+    const hasTime = request.tools.some((t) => t.durationMs !== undefined);
+    return `${request.tools.length} call${request.tools.length === 1 ? '' : 's'}` + (hasTime ? '' : ' · time unavailable');
+  }
   const detail = state.detail;
   const request = detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
   if (!request) return 'none selected';
@@ -1737,6 +1748,20 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
     }
     renderThreadHeader(body);
     renderThreadChart(body);
+    return;
+  }
+
+  if (id === 'toolTimeline') {
+    const detail = state.detail;
+    const request = detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
+    if (!request) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'Click a bar in the conversation chart to inspect a prompt.';
+      body.appendChild(empty);
+      return;
+    }
+    renderToolCallLanes(body, request.tools ?? []);
     return;
   }
 

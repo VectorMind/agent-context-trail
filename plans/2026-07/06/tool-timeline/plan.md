@@ -166,3 +166,11 @@ Non-goals:
   never rendered as zero.
 - `implementation.md` + `test.md` written; specification checkpoint
   refreshed; open points resolved or explicitly carried.
+
+## Status (closed 2026-07-06)
+
+All three phases implemented and validated against real local Claude,
+Codex, and Copilot sessions (see `implementation.md`, `test.md`). OP-001
+through OP-004 resolved as recorded above; OP-005 stays parked, out of
+scope. No specification changes were needed at close — the checkpoint
+reassessment found the work fits entirely inside already-codified rules.

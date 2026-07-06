@@ -1,4 +1,4 @@
-import { ConversationListItem, PromptRequest, UsageTokens } from '../domain/types';
+import { ConversationListItem, PromptRequest, ToolCallInfo, UsageTokens } from '../domain/types';
 import { formatUsd } from '../shared/format';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -755,6 +755,299 @@ export function renderChart(
     hint.textContent = 'Click a bar (or focus it and press Enter) to inspect that prompt.';
     container.appendChild(hint);
   }
+}
+
+// ---- per-call tool timeline (Prompt timeline section) ----------------------------
+// One column per tool call, in call order — matching the Tools table's '#' so
+// chart and table cross-reference trivially. Three lanes share that x-axis
+// but never a scale: IN chars, OUT chars, TIME (≈ when derived). Bars are
+// colored by tool name via the same categoryColorMap assignment as the
+// sibling "Tool activity" breakdown, so color means the same thing in both
+// places. A lane with no defined value anywhere (Copilot has no per-call
+// TIME) collapses to a caption-only unavailable note — never zero-height bars.
+
+const TC_BAR_WIDTH = 12;
+const TC_BAR_GAP = 6;
+const TC_M_LEFT = 48;
+const TC_M_RIGHT = 14;
+const TC_LANE_H = 64;
+const TC_UNAVAILABLE_H = 14;
+/** Guarantees room for the longest "— unavailable (…)" caption even when very few calls make for a narrow plot. */
+const TC_MIN_WIDTH = 420;
+
+interface ToolLaneLayout {
+  captionY: number;
+  top: number;
+  bottom: number;
+  height: number;
+}
+
+function toolLaneLayout(captionY: number, top: number, available: boolean): ToolLaneLayout {
+  const height = available ? TC_LANE_H : 0;
+  return { captionY, top, bottom: top + (available ? TC_LANE_H : TC_UNAVAILABLE_H), height };
+}
+
+/** One lane of per-call bars, colored per-call by tool identity; absent values leave a gap, never a zero bar. */
+function renderToolLane(
+  laneLayer: SVGGElement,
+  tools: ToolCallInfo[],
+  colX: (i: number) => number,
+  plotRight: number,
+  layout: ToolLaneLayout,
+  caption: string,
+  values: (number | undefined)[],
+  colorFor: (tool: ToolCallInfo) => string,
+  formatValue: (v: number) => string
+): void {
+  const captionEl = svgEl('text', { x: TC_M_LEFT, y: layout.captionY, class: 'chart-caption', fill: TEXT_MUTED });
+  captionEl.textContent = caption;
+  laneLayer.appendChild(captionEl);
+  laneLayer.appendChild(
+    svgEl('line', { x1: TC_M_LEFT, y1: layout.bottom, x2: plotRight, y2: layout.bottom, stroke: GRID, 'stroke-width': 1 })
+  );
+  const maxValue = Math.max(1, ...values.filter((v): v is number => v !== undefined && v > 0));
+  let maxIndex = -1;
+  let maxSeen = -Infinity;
+  values.forEach((v, i) => {
+    if (v === undefined || v <= 0) return;
+    const h = Math.max(1.5, (v / maxValue) * layout.height);
+    const bar = topRoundedRect(colX(i), layout.bottom - h, TC_BAR_WIDTH, h, 2);
+    bar.setAttribute('fill', colorFor(tools[i]));
+    laneLayer.appendChild(bar);
+    if (v > maxSeen) {
+      maxSeen = v;
+      maxIndex = i;
+    }
+  });
+  if (maxIndex >= 0) {
+    const cx = colX(maxIndex) + TC_BAR_WIDTH / 2;
+    const barTop = layout.bottom - (maxSeen / maxValue) * layout.height;
+    laneLayer.appendChild(laneValueLabel(cx, barTop, layout.top, formatValue(maxSeen), colorFor(tools[maxIndex])));
+  }
+}
+
+function unavailableLaneNote(laneLayer: SVGGElement, captionY: number, caption: string, reason: string): void {
+  const el = svgEl('text', { x: TC_M_LEFT, y: captionY, class: 'chart-caption', fill: TEXT_MUTED });
+  el.textContent = `${caption} — unavailable (${reason})`;
+  laneLayer.appendChild(el);
+}
+
+/**
+ * Per-call sequence lanes for the "Prompt timeline" section (plan.md Concept
+ * A): one column per tool call, IN/OUT/TIME bars aligned on the call-order
+ * x-axis, hand-built SVG like the sibling charts (no charting library).
+ */
+export function renderToolCallLanes(container: HTMLElement, tools: ToolCallInfo[]): void {
+  container.innerHTML = '';
+
+  if (tools.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No tool calls in this prompt.';
+    container.appendChild(empty);
+    return;
+  }
+
+  const colors = categoryColorMap(tools.map((t) => t.name));
+  const colorFor = (tool: ToolCallInfo): string => colors.get(tool.name) ?? COST_COLOR;
+  const hasErrors = tools.some((t) => t.isError);
+  const hasOut = tools.some((t) => t.outputChars !== undefined);
+  const hasTime = tools.some((t) => t.durationMs !== undefined);
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'chart-wrapper';
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+  for (const [name, color] of colors) legend.appendChild(legendItem(color, name));
+  if (hasErrors) legend.appendChild(legendItem(WARN_COLOR, 'Error', 'glyph'));
+  wrapper.appendChild(legend);
+
+  const scroll = document.createElement('div');
+  scroll.className = 'chart-scroll';
+  wrapper.appendChild(scroll);
+
+  const tooltip = document.createElement('div');
+  tooltip.className = 'chart-tooltip';
+  tooltip.style.display = 'none';
+  wrapper.appendChild(tooltip);
+
+  const n = tools.length;
+  const colX = (i: number): number => TC_M_LEFT + TC_BAR_GAP + i * (TC_BAR_WIDTH + TC_BAR_GAP);
+  const width = Math.max(colX(n - 1) + TC_BAR_WIDTH + TC_BAR_GAP + TC_M_RIGHT, TC_MIN_WIDTH);
+  const plotRight = width - TC_M_RIGHT;
+
+  const inLayout = toolLaneLayout(10, 20, true);
+  const outLayout = toolLaneLayout(inLayout.bottom + 24, inLayout.bottom + 24 + 8, hasOut);
+  const timeLayout = toolLaneLayout(outLayout.bottom + 24, outLayout.bottom + 24 + 8, hasTime);
+  const plotBottom = timeLayout.bottom;
+  const xLabelY = plotBottom + 15;
+  const chartHeight = xLabelY + 8;
+
+  const svg = svgEl('svg', {
+    width,
+    height: chartHeight,
+    viewBox: `0 0 ${width} ${chartHeight}`,
+    role: 'img',
+    'aria-label':
+      'Per tool call timeline: in, out, and time bars for every call in this prompt, in call order' +
+      (hasTime ? '' : ', time unavailable for this provider')
+  });
+  scroll.appendChild(svg);
+
+  const laneLayer = svgEl('g');
+  svg.appendChild(laneLayer);
+
+  renderToolLane(laneLayer, tools, colX, plotRight, inLayout, 'IN (chars)', tools.map((t) => t.inputChars), colorFor, formatTokensCompact);
+
+  if (hasOut) {
+    renderToolLane(
+      laneLayer,
+      tools,
+      colX,
+      plotRight,
+      outLayout,
+      'OUT (chars)',
+      tools.map((t) => t.outputChars),
+      colorFor,
+      formatTokensCompact
+    );
+  } else {
+    unavailableLaneNote(laneLayer, outLayout.captionY, 'OUT (chars)', 'no result recorded');
+  }
+
+  if (hasTime) {
+    renderToolLane(
+      laneLayer,
+      tools,
+      colX,
+      plotRight,
+      timeLayout,
+      'TIME',
+      tools.map((t) => t.durationMs),
+      colorFor,
+      formatDurationMs
+    );
+  } else {
+    unavailableLaneNote(laneLayer, timeLayout.captionY, 'TIME', 'no per-call duration in this log');
+  }
+
+  // error markers: reserved warning color + glyph, in a row above the IN lane
+  tools.forEach((tool, i) => {
+    if (!tool.isError) return;
+    const marker = svgEl('text', {
+      x: colX(i) + TC_BAR_WIDTH / 2,
+      y: inLayout.top - 4,
+      'text-anchor': 'middle',
+      class: 'chart-warn-marker',
+      fill: WARN_COLOR
+    });
+    marker.textContent = '▲';
+    laneLayer.appendChild(marker);
+  });
+
+  // ---- tooltip plumbing ----
+  const fillTooltip = (index: number): void => {
+    const tool = tools[index];
+    tooltip.textContent = '';
+    const header = document.createElement('div');
+    header.className = 'tooltip-header';
+    header.textContent = `#${index + 1} ${tool.name}`;
+    tooltip.appendChild(header);
+
+    if (tool.inputPreview) tooltip.appendChild(tooltipRow(undefined, false, 'Target', tool.inputPreview));
+    const color = colorFor(tool);
+    tooltip.appendChild(tooltipRow(color, false, 'In', `${formatTokens(tool.inputChars)} chars`));
+    tooltip.appendChild(
+      tooltipRow(color, false, 'Out', tool.outputChars !== undefined ? `${formatTokens(tool.outputChars)} chars` : 'unavailable')
+    );
+    tooltip.appendChild(
+      tooltipRow(
+        color,
+        false,
+        'Time',
+        tool.durationMs !== undefined ? `${tool.durationSource === 'derived' ? '≈ ' : ''}${formatDurationMs(tool.durationMs)}` : 'unavailable'
+      )
+    );
+    if (tool.isError) tooltip.appendChild(tooltipRow(WARN_COLOR, false, 'Error', 'tool returned an error'));
+    if (tool.agentId) {
+      const bits = [`subagent ${tool.agentId.slice(0, 10)}…`];
+      if (tool.subagentModel) bits.push(shortModelName(tool.subagentModel));
+      if (tool.subagentTokens !== undefined) bits.push(`${formatTokensCompact(tool.subagentTokens)} tokens`);
+      if (tool.subagentCostUsd !== undefined) bits.push(formatUsd(tool.subagentCostUsd));
+      tooltip.appendChild(tooltipRow(undefined, false, 'Delegated', bits.join(' · ')));
+    }
+  };
+
+  const positionTooltip = (clientX: number, clientY: number): void => {
+    tooltip.style.display = 'block';
+    const rect = wrapper.getBoundingClientRect();
+    let x = clientX - rect.left + 14;
+    let y = clientY - rect.top - 10;
+    if (x + tooltip.offsetWidth > rect.width - 4) x = clientX - rect.left - tooltip.offsetWidth - 14;
+    if (x < 4) x = 4;
+    if (y + tooltip.offsetHeight > rect.height - 4) y = rect.height - tooltip.offsetHeight - 4;
+    if (y < 4) y = 4;
+    tooltip.style.left = `${x}px`;
+    tooltip.style.top = `${y}px`;
+  };
+  const hideTooltip = (): void => {
+    tooltip.style.display = 'none';
+  };
+
+  // ---- one hover/focus target per call --------------------------------------
+  tools.forEach((tool, index) => {
+    const x = colX(index);
+    const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'img' });
+    group.setAttribute(
+      'aria-label',
+      `Call ${index + 1}: ${tool.name}, in ${formatTokens(tool.inputChars)} chars, ` +
+        `out ${tool.outputChars !== undefined ? `${formatTokens(tool.outputChars)} chars` : 'unavailable'}, ` +
+        `time ${tool.durationMs !== undefined ? formatDurationMs(tool.durationMs) : 'unavailable'}` +
+        (tool.isError ? ', error' : '')
+    );
+
+    const hit = svgEl('rect', {
+      class: 'hit',
+      x: x - TC_BAR_GAP / 2,
+      y: inLayout.top,
+      width: TC_BAR_WIDTH + TC_BAR_GAP,
+      height: plotBottom - inLayout.top,
+      rx: 2,
+      fill: 'transparent'
+    });
+    group.appendChild(hit);
+
+    group.addEventListener('pointermove', (ev: PointerEvent) => {
+      fillTooltip(index);
+      positionTooltip(ev.clientX, ev.clientY);
+    });
+    group.addEventListener('pointerleave', hideTooltip);
+    group.addEventListener('focus', () => {
+      fillTooltip(index);
+      const hitRect = hit.getBoundingClientRect();
+      positionTooltip(hitRect.right, hitRect.top + 20);
+    });
+    group.addEventListener('blur', hideTooltip);
+
+    svg.appendChild(group);
+  });
+
+  // ---- x labels (call order, matching the Tools table '#') -------------------
+  const labelStep = Math.max(1, Math.ceil(n / 25));
+  tools.forEach((_, index) => {
+    if (index % labelStep !== 0 && index !== n - 1) return;
+    const label = svgEl('text', {
+      x: colX(index) + TC_BAR_WIDTH / 2,
+      y: xLabelY,
+      'text-anchor': 'middle',
+      class: 'chart-tick',
+      fill: TEXT_MUTED
+    });
+    label.textContent = `#${index + 1}`;
+    svg.appendChild(label);
+  });
+
+  container.appendChild(wrapper);
 }
 
 /** Rect with only the right corners rounded: data-end rounded, baseline square. */
