@@ -1,30 +1,16 @@
-﻿# Closed Packets
+# Closed Packets
 
-- `plans/2026-07/05/conversations-overview/`
-  - Status: closed 2026-07-05 (OP-001/OP-002 resolved: Layout B wins)
-  - Scope: per-conversation metadata (first/last message, requests, tokens,
-    cost) and three switchable layout experiments; verdict B (App bar) â€”
-    stacked panels page with dual collapse controls (heading bars + side app
-    bar), in-place selection, no scroll animation. Switcher shelved behind
-    `LAYOUT_EXPERIMENTS = false` in `src/webview/main.ts` for future layout
-    variants; Panel section of `specification/surfaces-and-privacy.md`
-    rewritten to the winner ("titles only" rule retired).
-  - Proof: `plans/2026-07/05/conversations-overview/test.md`
-
-- `plans/2026-07/04/workflow-bootstrap/`
-  - Status: closed
-  - Scope: bootstrap the repository workflow, packet structure, and reserved
-    specification area
-  - Proof: `plans/2026-07/04/workflow-bootstrap/test.md`
-- `plans/2026-07/05/specification-checkpoint/`
-  - Status: closed
-  - Scope: require specification assessment when plans are agreed and validated
-  - Proof: `plans/2026-07/05/specification-checkpoint/test.md`
-
-
-- `plans/2026-07/05/plans-layout-refactor/`
-  - Status: closed 2026-07-05
-  - Scope: move plan packets to month/day/change layout and update workflow references
-  - Proof: `plans/2026-07/05/plans-layout-refactor/test.md`
-
-
+| Packet | Closed | Description |
+| --- | --- | --- |
+| `plans/2026-07/07/call-details` | 2026-07-07 | Done. LLM calls interleaved into "Prompt timeline" (◆ columns, stacked CONTEXT lane, per-provider honest depth) + new "Call detail" section: fixed-shape cards, host-trimmed 8+4-line payload excerpts (full payloads never reach the webview), Tools-table↔chart selection sync, prev/next steppers. OP-101..OP-204 resolved same day; validated on real sessions of all three providers, both themes. Two candidate spec topics pending maintainer review. |
+| `plans/2026-07/06/tool-timeline` | 2026-07-06 | Done. Per-tool-call "Prompt timeline" chart (IN/OUT/TIME lanes) shipped next to "Prompt detail". OP-001–004 resolved same day; OP-005 (chart↔table click) stays out of scope. Validated on real Claude (110-call), Codex (102-call), Copilot (6-call) sessions; a caption-clipping bug on narrow prompts found and fixed. |
+| `plans/2026-07/06/copilot-parity` | 2026-07-06 | Done. Copilot support shipped zero-config from local `chatSessions/*.jsonl` (real tokens, model, cost, premium credits). OTel/`sql.js` tier deferred, not built. Gap: cache-read/write tokens confirmed absent from source. |
+| `plans/2026-07/05/marketplace-release` | 2026-07-05 | Done. Packaging complete: icon, gallery banner, README, `DEVELOPMENT.md`, `CHANGELOG.md`; VSIX verified (10 files, 51.6 KB). Follow-up (maintainer action, outside packet scope): `vsce login` + `vsce publish` still need to be run. |
+| `plans/2026-07/05/codex-parity` | 2026-07-05 | Done. Codex adapter + Current Status panel shipped, validated against real local rollout data. Same-day amendment: encoding fixes, "Request"→"Prompt" rename, Codex cost moved from unavailable to estimated. |
+| `plans/2026-07/05/conversation-meta` | 2026-07-05 | Done. Enriched request metadata shipped as Layout D (tools table, model/wall-time lanes, cache-break markers, deep request card); maintainer verdict picked D as the only active layout, spec updated. Includes an accuracy fix: usage deduped per `message.id` (was ~65% overcounted). |
+| `plans/2026-07/05/panel-chart-upgrade` | 2026-07-05 | Done. Thread chart redesign (legend, split token/cost plots on one request axis, tooltips, keyboard access) plus a visual request-detail card. Open point: "no dual-axis" proposed as a spec topic, still pending maintainer review. |
+| `plans/2026-07/04/initial-design` | 2026-07-04 | Done (Phase 1 & 2). Claude JSONL parsing, `tokens-cost.yaml`, status bar (USD-only, AIC unit dropped), webview panel (list, SVG chart, detail card) implemented and validated. Phase 3 (Codex) and Copilot support continued as separate packets, both since completed. |
+| `plans/2026-07/05/conversations-overview` | 2026-07-05 | Done. Per-conversation metadata + three layout experiments; verdict Layout B (App bar) — stacked panels, dual collapse controls, in-place selection. Switcher shelved behind `LAYOUT_EXPERIMENTS = false`; spec Panel section rewritten. |
+| `plans/2026-07/05/specification-checkpoint` | 2026-07-05 | Done. Added mandatory specification-checkpoint assessment at plan start and before validation close, plus the explicit "no relevant spec" recording rule, to `WORKFLOW.md` and `AGENTS.md`. |
+| `plans/2026-07/05/plans-layout-refactor` | 2026-07-05 | Done. Packet folders moved to `plans/YYYY-MM/DD/change-id/` layout; `WORKFLOW.md`, `AGENTS.md`, `plans/README.md` references updated. |
+| `plans/2026-07/04/workflow-bootstrap` | 2026-07-04 | Done. Bootstrapped repo workflow contract: `AGENTS.md`, `WORKFLOW.md`, `specification/` reserve, `plans/` packet structure, `plans/open.md` + `plans/closed.md`. |

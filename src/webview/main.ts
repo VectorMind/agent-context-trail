@@ -5,16 +5,28 @@ import {
   formatTokens,
   formatTokensCompact,
   gapBeforeMs,
+  llmCallSpanMs,
   renderChart,
   renderOverviewChart,
-  renderToolCallLanes,
+  renderPromptTimeline,
   shortModelName,
+  timelineEvents,
+  TimelineSelection,
   OVERVIEW_CHART_MAX_ROWS,
   TOKEN_SERIES,
   tokenTotal
 } from './chart';
 import { ConversationDetailPayload, HostToWebviewMessage, WebviewToHostMessage } from '../panel/protocol';
-import { ConversationListItem, CurrentStatusSnapshot, ProviderId, ToolCallInfo } from '../domain/types';
+import {
+  ConversationListItem,
+  CurrentStatusSnapshot,
+  LlmCallInfo,
+  PayloadExcerpt,
+  PromptRequest,
+  ProviderId,
+  ToolCallDetail,
+  ToolCallInfo
+} from '../domain/types';
 import { formatUsd } from '../shared/format';
 
 declare function acquireVsCodeApi(): {
@@ -44,7 +56,7 @@ type LayoutId = 'A' | 'B' | 'C' | 'D';
 const DEFAULT_LAYOUT: LayoutId = 'D';
 type SortKey = 'title' | 'firstAt' | 'lastAt' | 'requestCount' | 'totalTokens' | 'totalCostUsd';
 type SortDir = 'asc' | 'desc';
-type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline';
+type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline' | 'callDetail';
 /** Tools table (Layout D request card): '#' is call order, not a sortable metric. */
 type ToolSortKey = 'order' | 'name' | 'target' | 'in' | 'out' | 'time';
 
@@ -59,7 +71,8 @@ const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] =
   { id: 'context', title: 'Current Context Status', icon: '≣', hint: 'Selected conversation context occupancy' },
   { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
   { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' },
-  { id: 'toolTimeline', title: 'Prompt timeline', icon: '▥', hint: 'Per-call in/out/time bars for the selected prompt' }
+  { id: 'toolTimeline', title: 'Prompt timeline', icon: '▥', hint: 'LLM and tool calls of the selected prompt, in sequence' },
+  { id: 'callDetail', title: 'Call detail', icon: '⌖', hint: 'Bounded detail for the selected LLM or tool call' }
 ];
 
 interface PersistedState {
@@ -90,6 +103,19 @@ interface State {
    * state (not a local DOM closure) so it survives the full re-render any
    * other in-card control (e.g. sorting the tools table) triggers. */
   promptExpanded: boolean;
+  /** Call selected in the Prompt timeline / Tools table, driving Call detail. */
+  selectedCall?: TimelineSelection;
+}
+
+/**
+ * On-demand tool-call excerpts (plans/2026-07/07/call-details OP-101), keyed
+ * `${provider}/${conversationId}/${toolCallId}`. 'loading' while the host
+ * fetch is in flight. Kept outside `state`: it is a cache, not view state.
+ */
+const toolDetailCache = new Map<string, ToolCallDetail | 'loading'>();
+
+function toolDetailKey(provider: ProviderId, conversationId: string, toolCallId: string): string {
+  return `${provider}/${conversationId}/${toolCallId}`;
 }
 
 const persisted = vscodeApi.getState<PersistedState>();
@@ -325,7 +351,38 @@ function selectRequest(index: number): void {
   state.sectionsCollapsed.request = false;
   state.sectionsCollapsed.toolTimeline = false;
   state.promptExpanded = false;
+  state.selectedCall = undefined;
   persistState();
+  render();
+}
+
+/** Current selected request, when the loaded detail has one. */
+function selectedRequest(): PromptRequest | undefined {
+  const detail = state.detail;
+  return detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
+}
+
+/**
+ * Selects one call (timeline column, Tools-table row, or stepper) and drives
+ * the Call detail section; tool calls trigger the on-demand excerpt fetch.
+ */
+function selectCall(selection: TimelineSelection): void {
+  state.selectedCall = selection;
+  state.sectionsCollapsed.callDetail = false;
+  persistState();
+
+  const detail = state.detail;
+  const request = selectedRequest();
+  if (detail && request && selection.kind === 'tool') {
+    const tool = request.tools?.[selection.index];
+    if (tool) {
+      const key = toolDetailKey(detail.provider, detail.id, tool.id);
+      if (!toolDetailCache.has(key)) {
+        toolDetailCache.set(key, 'loading');
+        post({ type: 'getToolCallDetail', provider: detail.provider, conversationId: detail.id, toolCallId: tool.id });
+      }
+    }
+  }
   render();
 }
 
@@ -1481,6 +1538,19 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
     const tbody = document.createElement('tbody');
     sortedTools(request.tools).forEach(({ tool, order }) => {
       const tr = document.createElement('tr');
+      // '#' is the call's position in the actual sequence, so order-1 is the
+      // tools[] index — the same key the Prompt timeline columns select on.
+      if (state.selectedCall?.kind === 'tool' && state.selectedCall.index === order - 1) tr.classList.add('active');
+      tr.tabIndex = 0;
+      tr.setAttribute('role', 'button');
+      tr.setAttribute('aria-label', `Inspect tool call ${order}: ${tool.name}`);
+      tr.addEventListener('click', () => selectCall({ kind: 'tool', index: order - 1 }));
+      tr.addEventListener('keydown', (ev: KeyboardEvent) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          selectCall({ kind: 'tool', index: order - 1 });
+        }
+      });
       const cells: { text: string; numeric?: boolean; className?: string; tooltip?: string }[] = [
         { text: String(order), className: 'muted' },
         { text: tool.name },
@@ -1537,6 +1607,345 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
   card.appendChild(shares);
 
   container.appendChild(card);
+}
+
+// ---- Call detail section (plans/2026-07/07/call-details) ---------------------------
+// One section, card adapts to the selected call kind (OP-204). Cards keep a
+// fixed anatomy — header + steppers, fields, snapshot zones of constant
+// height, metrics footer — regardless of payload size (OP-102): the webview
+// only ever receives bounded excerpts, never full payloads.
+
+/** Input keys rendered as directory + file name + extension badge (OP-103). */
+const FILE_FIELD_KEYS = new Set(['file_path', 'filePath', 'path', 'notebook_path', 'absolute_path']);
+/** Input keys rendered as a monospace value (commands, patterns, globs). */
+const CODE_FIELD_KEYS = new Set(['command', 'pattern', 'glob', 'old_string', 'new_string', 'query', 'q', 'url']);
+
+function fieldRow(key: string, valueEl: HTMLElement): HTMLElement[] {
+  const keyEl = document.createElement('div');
+  keyEl.className = 'call-field-key';
+  keyEl.textContent = key;
+  return [keyEl, valueEl];
+}
+
+function textFieldValue(value: string, mono: boolean): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'call-field-value' + (mono ? ' mono' : '');
+  el.textContent = value;
+  el.title = value;
+  return el;
+}
+
+/** Directory (muted) + file name (strong) + extension badge. */
+function fileFieldValue(path: string): HTMLElement {
+  const el = document.createElement('div');
+  el.className = 'call-field-value mono';
+  el.title = path;
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  const dir = slash >= 0 ? path.slice(0, slash + 1) : '';
+  const base = slash >= 0 ? path.slice(slash + 1) : path;
+  if (dir) {
+    const dirEl = document.createElement('span');
+    dirEl.className = 'call-file-dir';
+    dirEl.textContent = dir;
+    el.appendChild(dirEl);
+  }
+  const baseEl = document.createElement('span');
+  baseEl.className = 'call-file-name';
+  baseEl.textContent = base;
+  el.appendChild(baseEl);
+  const dot = base.lastIndexOf('.');
+  if (dot > 0 && dot < base.length - 1) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = base.slice(dot + 1).toLowerCase();
+    el.appendChild(badge);
+  }
+  return el;
+}
+
+function renderCallFields(container: HTMLElement, detail: ToolCallDetail): void {
+  const grid = document.createElement('div');
+  grid.className = 'call-fields';
+  for (const field of detail.fields) {
+    const valueEl = FILE_FIELD_KEYS.has(field.key)
+      ? fileFieldValue(field.value)
+      : textFieldValue(field.value, CODE_FIELD_KEYS.has(field.key));
+    grid.append(...fieldRow(field.key, valueEl));
+  }
+  if (detail.fields.length > 0) container.appendChild(grid);
+}
+
+/**
+ * Fixed-height monospace snapshot zone: head lines, a skipped-chars
+ * separator, tail lines (OP-102: 8 + 4). The zone keeps its height whether
+ * the payload is 3 lines, absent, or 200k chars — consistency over density.
+ */
+function snapshotBlock(caption: string, excerpt: PayloadExcerpt | undefined, emptyNote: string): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'snapshot-wrap';
+
+  const head = document.createElement('div');
+  head.className = 'snapshot-caption';
+  if (excerpt) {
+    const shownAll = !excerpt.tailLines && excerpt.skippedChars === 0;
+    head.textContent =
+      `${caption} · ${formatTokensCompact(excerpt.totalChars)} chars · ${excerpt.totalLines} line${excerpt.totalLines === 1 ? '' : 's'}` +
+      (shownAll ? '' : ' · excerpt') +
+      (excerpt.reconstructed ? ' · reconstructed from the log’s display tree' : '');
+  } else {
+    head.textContent = caption;
+  }
+  wrap.appendChild(head);
+
+  const zone = document.createElement('div');
+  zone.className = 'snapshot';
+  if (!excerpt) {
+    const note = document.createElement('div');
+    note.className = 'snapshot-empty';
+    note.textContent = emptyNote;
+    zone.appendChild(note);
+  } else {
+    for (const line of excerpt.headLines) {
+      const lineEl = document.createElement('div');
+      lineEl.className = 'snapshot-line';
+      lineEl.textContent = line || ' ';
+      zone.appendChild(lineEl);
+    }
+    if (excerpt.tailLines) {
+      const sep = document.createElement('div');
+      sep.className = 'snapshot-sep';
+      sep.textContent = `⋯ ${formatTokensCompact(excerpt.skippedChars)} chars skipped ⋯`;
+      zone.appendChild(sep);
+      for (const line of excerpt.tailLines) {
+        const lineEl = document.createElement('div');
+        lineEl.className = 'snapshot-line';
+        lineEl.textContent = line || ' ';
+        zone.appendChild(lineEl);
+      }
+    }
+  }
+  wrap.appendChild(zone);
+  return wrap;
+}
+
+/** Header row shared by both card kinds: title, badges, prev/next steppers walking the event sequence. */
+function callCardHeader(card: HTMLElement, request: PromptRequest, titleText: string, badges: HTMLElement[]): void {
+  const events = timelineEvents(request);
+  const sel = state.selectedCall;
+  const pos = sel
+    ? events.findIndex(
+        (e) =>
+          (e.kind === 'tool' && sel.kind === 'tool' && e.toolIndex === sel.index) ||
+          (e.kind === 'llm' && sel.kind === 'llm' && e.llmIndex === sel.index)
+      )
+    : -1;
+
+  const header = document.createElement('div');
+  header.className = 'detail-header';
+  const title = document.createElement('h3');
+  title.textContent = titleText;
+  for (const badge of badges) title.appendChild(badge);
+  header.appendChild(title);
+
+  const steppers = document.createElement('div');
+  steppers.className = 'call-steppers';
+  const posLabel = document.createElement('span');
+  posLabel.className = 'call-pos';
+  posLabel.textContent = pos >= 0 ? `${pos + 1} of ${events.length}` : '';
+  const mkStep = (label: string, target: number, hint: string): HTMLButtonElement => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'call-step';
+    button.textContent = label;
+    button.title = hint;
+    button.disabled = target < 0 || target >= events.length;
+    if (!button.disabled) {
+      button.addEventListener('click', () => {
+        const event = events[target];
+        selectCall(event.kind === 'tool' ? { kind: 'tool', index: event.toolIndex } : { kind: 'llm', index: event.llmIndex });
+      });
+    }
+    return button;
+  };
+  steppers.append(mkStep('‹', pos - 1, 'Previous call in the sequence'), posLabel, mkStep('›', pos + 1, 'Next call in the sequence'));
+  header.appendChild(steppers);
+  card.appendChild(header);
+}
+
+function badgeEl(text: string, warn = false): HTMLElement {
+  const badge = document.createElement('span');
+  badge.className = 'badge' + (warn ? ' badge-warn' : '');
+  badge.textContent = text;
+  return badge;
+}
+
+function renderToolCallCard(container: HTMLElement, request: PromptRequest, tool: ToolCallInfo, toolIndex: number): void {
+  const detailPayload = state.detail;
+  const card = document.createElement('div');
+  card.className = 'detail-card enriched call-card';
+
+  const toolCount = request.tools?.length ?? 0;
+  const badges: HTMLElement[] = [];
+  if (tool.isError) badges.push(badgeEl('error', true));
+  callCardHeader(card, request, `#${toolIndex + 1} of ${toolCount} · ${tool.name}`, badges);
+
+  const meta = document.createElement('div');
+  meta.className = 'detail-meta';
+  meta.textContent = [
+    tool.startedAt ? formatExact(tool.startedAt) : undefined,
+    tool.durationMs !== undefined ? `${tool.durationSource === 'derived' ? '≈' : ''}${formatDurationMs(tool.durationMs)}` : 'time unavailable'
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  card.appendChild(meta);
+
+  // ---- host-fetched bounded detail: fields + snapshots ----
+  const key = detailPayload ? toolDetailKey(detailPayload.provider, detailPayload.id, tool.id) : undefined;
+  const fetched = key ? toolDetailCache.get(key) : undefined;
+  if (fetched === 'loading' || fetched === undefined) {
+    const loading = document.createElement('div');
+    loading.className = 'diag-row';
+    loading.textContent = 'Loading call payload from the session log…';
+    card.appendChild(loading);
+    card.appendChild(snapshotBlock('INPUT', undefined, 'loading…'));
+    card.appendChild(snapshotBlock('RESULT', undefined, 'loading…'));
+  } else if (fetched.unavailable) {
+    const warn = document.createElement('div');
+    warn.className = 'diag-row warn';
+    warn.textContent = `▲ ${fetched.unavailable}`;
+    card.appendChild(warn);
+    card.appendChild(snapshotBlock('INPUT', undefined, 'unavailable'));
+    card.appendChild(snapshotBlock('RESULT', undefined, 'unavailable'));
+  } else {
+    renderCallFields(card, fetched);
+    card.appendChild(
+      snapshotBlock(
+        fetched.inputPayloadKey ? `INPUT · ${fetched.inputPayloadKey}` : 'INPUT',
+        fetched.inputExcerpt,
+        fetched.fields.length > 0 ? 'no long text payload — the full input is the fields above' : 'no input payload recorded'
+      )
+    );
+    card.appendChild(
+      snapshotBlock(
+        'RESULT',
+        fetched.resultExcerpt,
+        tool.outputChars === undefined ? 'no result recorded in this log' : 'result content not stored in this log'
+      )
+    );
+  }
+
+  // ---- metrics footer (always available from the eager parse) ----
+  const chips = document.createElement('div');
+  chips.className = 'chips';
+  chips.appendChild(chip('in', formatChars(tool.inputChars)));
+  if (tool.outputChars !== undefined) chips.appendChild(chip('out', formatChars(tool.outputChars)));
+  if (tool.durationMs !== undefined) {
+    chips.appendChild(
+      chip('time', `${tool.durationSource === 'derived' ? '≈' : ''}${formatDurationMs(tool.durationMs)}`,
+        tool.durationSource === 'derived' ? 'Derived from tool_use → tool_result timestamps' : 'Provider-reported duration')
+    );
+  }
+  if (tool.agentId) {
+    chips.appendChild(chip('subagent', tool.agentId.slice(0, 10) + '…'));
+    if (tool.subagentModel) chips.appendChild(chip('subagent model', shortModelName(tool.subagentModel)));
+    if (tool.subagentTokens !== undefined) chips.appendChild(chip('subagent tokens', formatTokensCompact(tool.subagentTokens)));
+    if (tool.subagentCostUsd !== undefined) chips.appendChild(chip('subagent cost', formatUsd(tool.subagentCostUsd)));
+  }
+  card.appendChild(chips);
+
+  container.appendChild(card);
+}
+
+function renderLlmCallCard(container: HTMLElement, request: PromptRequest, call: LlmCallInfo, llmIndex: number): void {
+  const card = document.createElement('div');
+  card.className = 'detail-card enriched call-card';
+
+  const llmCount = request.llmCalls?.length ?? 0;
+  const badges: HTMLElement[] = [];
+  if (call.model) badges.push(badgeEl(shortModelName(call.model)));
+  callCardHeader(card, request, `LLM call L${llmIndex + 1} of ${llmCount}`, badges);
+
+  const span = llmCallSpanMs(call);
+  const meta = document.createElement('div');
+  meta.className = 'detail-meta';
+  meta.textContent = [
+    call.startedAt ? formatExact(call.startedAt) : undefined,
+    span !== undefined ? `≈${formatDurationMs(span)} streaming` : undefined,
+    call.stopReason ? `ended: ${call.stopReason.replace(/_/g, ' ')}` : undefined
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  card.appendChild(meta);
+
+  if (call.contextTokens !== undefined) {
+    // context composition: cache read / cache write / fresh remainder — the
+    // same provably-summing split the timeline's CONTEXT lane stacks.
+    const cacheRead = Math.min(call.cacheReadTokens ?? 0, call.contextTokens);
+    const cacheWrite = Math.min(call.cacheCreationTokens ?? 0, Math.max(0, call.contextTokens - cacheRead));
+    const fresh = Math.max(0, call.contextTokens - cacheRead - cacheWrite);
+    card.appendChild(subHeading('Context submitted with this call'));
+    const breakdown = document.createElement('div');
+    breakdown.className = 'breakdown';
+    const max = Math.max(1, cacheRead, cacheWrite, fresh);
+    breakdown.append(...breakdownRow('Cache read', cacheRead, max, TOKEN_SERIES[0].color));
+    breakdown.append(...breakdownRow('Cache write', cacheWrite, max, TOKEN_SERIES[1].color));
+    breakdown.append(...breakdownRow('Fresh', fresh, max, TOKEN_SERIES[2].color));
+    const note = document.createElement('div');
+    note.className = 'breakdown-note';
+    note.textContent =
+      `Total ${formatTokens(call.contextTokens)} tokens` +
+      (call.modelContextWindow
+        ? ` · ${((call.contextTokens / call.modelContextWindow) * 100).toFixed(1)}% of the ${formatTokensCompact(call.modelContextWindow)} window`
+        : '');
+    breakdown.appendChild(note);
+    card.appendChild(breakdown);
+  } else {
+    const row = document.createElement('div');
+    row.className = 'diag-row';
+    row.textContent = 'Per-call token usage is not recorded in this provider’s log.';
+    card.appendChild(row);
+  }
+
+  const chips = document.createElement('div');
+  chips.className = 'chips';
+  if (call.outputTokens !== undefined) chips.appendChild(chip('output', `${formatTokensCompact(call.outputTokens)} tok`));
+  if (call.reasoningOutputTokens !== undefined && call.reasoningOutputTokens > 0) {
+    chips.appendChild(chip('reasoning', `${formatTokensCompact(call.reasoningOutputTokens)} tok`, 'Included in output tokens (a breakdown, not an addition)'));
+  }
+  if (call.thinkingTokens !== undefined && call.thinkingTokens > 0) {
+    chips.appendChild(chip('thinking', `${formatTokensCompact(call.thinkingTokens)} tok`));
+  }
+  if (call.costUsd !== undefined) chips.appendChild(chip('cost', formatUsd(call.costUsd), 'Estimated from the rate table — no provider reports per-call cost'));
+  if (call.modelContextWindow !== undefined) chips.appendChild(chip('context window', formatTokensCompact(call.modelContextWindow)));
+  card.appendChild(chips);
+
+  container.appendChild(card);
+}
+
+function renderCallDetailSection(body: HTMLElement): void {
+  const request = selectedRequest();
+  if (!request) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Click a bar in the conversation chart to inspect a prompt.';
+    body.appendChild(empty);
+    return;
+  }
+  const sel = state.selectedCall;
+  if (!sel) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Click a column in the Prompt timeline — or a row in the Tools table — to inspect a call.';
+    body.appendChild(empty);
+    return;
+  }
+  if (sel.kind === 'tool') {
+    const tool = request.tools?.[sel.index];
+    if (tool) renderToolCallCard(body, request, tool, sel.index);
+    return;
+  }
+  const call = request.llmCalls?.[sel.index];
+  if (call) renderLlmCallCard(body, request, call, sel.index);
 }
 
 // ---- conversations table ------------------------------------------------------------
@@ -1664,12 +2073,27 @@ function sectionSummary(id: SectionId, items: ConversationListItem[]): string {
     )} tokens · ${formatUsd(detail.totalCost.usd)}`;
   }
   if (id === 'toolTimeline') {
-    const detail = state.detail;
-    const request = detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
+    const request = selectedRequest();
     if (!request) return 'none selected';
-    if (!request.tools?.length) return 'no tool calls';
-    const hasTime = request.tools.some((t) => t.durationMs !== undefined);
-    return `${request.tools.length} call${request.tools.length === 1 ? '' : 's'}` + (hasTime ? '' : ' · time unavailable');
+    const llmCount = request.llmCalls?.length ?? 0;
+    const toolCount = request.tools?.length ?? 0;
+    if (llmCount === 0 && toolCount === 0) return 'no calls recorded';
+    const parts: string[] = [];
+    if (llmCount > 0) parts.push(`${llmCount} LLM call${llmCount === 1 ? '' : 's'}`);
+    parts.push(`${toolCount} tool call${toolCount === 1 ? '' : 's'}`);
+    const hasTime = (request.tools ?? []).some((t) => t.durationMs !== undefined);
+    return parts.join(' · ') + (hasTime || toolCount === 0 ? '' : ' · time unavailable');
+  }
+  if (id === 'callDetail') {
+    const request = selectedRequest();
+    const sel = state.selectedCall;
+    if (!request || !sel) return 'none selected';
+    if (sel.kind === 'tool') {
+      const tool = request.tools?.[sel.index];
+      return tool ? `#${sel.index + 1} · ${tool.name}` : 'none selected';
+    }
+    const call = request.llmCalls?.[sel.index];
+    return call ? `L${sel.index + 1} · ${call.model ? shortModelName(call.model) : 'LLM call'}` : 'none selected';
   }
   const detail = state.detail;
   const request = detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
@@ -1752,8 +2176,7 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
   }
 
   if (id === 'toolTimeline') {
-    const detail = state.detail;
-    const request = detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
+    const request = selectedRequest();
     if (!request) {
       const empty = document.createElement('div');
       empty.className = 'empty';
@@ -1761,7 +2184,12 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
       body.appendChild(empty);
       return;
     }
-    renderToolCallLanes(body, request.tools ?? []);
+    renderPromptTimeline(body, request, state.selectedCall, selectCall);
+    return;
+  }
+
+  if (id === 'callDetail') {
+    renderCallDetailSection(body);
     return;
   }
 
@@ -1889,6 +2317,7 @@ function applyDetail(detail: ConversationDetailPayload | undefined, preserveSele
       : undefined;
   state.loadingId = undefined;
   state.promptExpanded = false;
+  state.selectedCall = undefined;
   if (detail) state.selectedProvider = detail.provider;
 }
 
@@ -1944,6 +2373,10 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
     render();
   } else if (message.type === 'conversationDetail') {
     applyDetail(message.detail, false);
+    render();
+  } else if (message.type === 'toolCallDetail') {
+    const provider = state.detail?.provider ?? state.selectedProvider;
+    toolDetailCache.set(toolDetailKey(provider, message.conversationId, message.detail.toolCallId), message.detail);
     render();
   }
 });

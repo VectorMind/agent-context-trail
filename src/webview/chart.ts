@@ -1,4 +1,4 @@
-import { ConversationListItem, PromptRequest, ToolCallInfo, UsageTokens } from '../domain/types';
+import { ConversationListItem, LlmCallInfo, PromptRequest, ToolCallInfo, UsageTokens } from '../domain/types';
 import { formatUsd } from '../shared/format';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -285,14 +285,14 @@ function topRoundedRect(x: number, yTop: number, w: number, h: number, r: number
   return svgEl('path', { d });
 }
 
-function legendItem(color: string, label: string, kind: 'swatch' | 'line' | 'glyph' = 'swatch'): HTMLElement {
+function legendItem(color: string, label: string, kind: 'swatch' | 'line' | 'glyph' = 'swatch', glyphChar = '▲'): HTMLElement {
   const item = document.createElement('span');
   item.className = 'legend-item';
   if (kind === 'glyph') {
     const glyph = document.createElement('span');
     glyph.className = 'legend-glyph';
     glyph.style.color = color;
-    glyph.textContent = '▲';
+    glyph.textContent = glyphChar;
     item.appendChild(glyph);
   } else {
     const key = document.createElement('span');
@@ -757,14 +757,19 @@ export function renderChart(
   }
 }
 
-// ---- per-call tool timeline (Prompt timeline section) ----------------------------
-// One column per tool call, in call order — matching the Tools table's '#' so
-// chart and table cross-reference trivially. Three lanes share that x-axis
-// but never a scale: IN chars, OUT chars, TIME (≈ when derived). Bars are
-// colored by tool name via the same categoryColorMap assignment as the
-// sibling "Tool activity" breakdown, so color means the same thing in both
-// places. A lane with no defined value anywhere (Copilot has no per-call
-// TIME) collapses to a caption-only unavailable note — never zero-height bars.
+// ---- prompt timeline: interleaved LLM + tool call events ---------------------------
+// One column per event — LLM calls interleaved with the tool calls they
+// requested (plans/2026-07/07/call-details OP-201), ordered by timestamp with
+// ties resolved LLM-first (the LLM response is what carries the tool
+// requests). Lanes share the x-axis but never a scale (ui-design.md):
+//   CONTEXT (tokens)  — LLM columns only; stacked cache-read / cache-write /
+//                       fresh segments (one unit, so stacking is honest).
+//   IN / OUT (chars)  — tool columns only, colored by tool name via the same
+//                       categoryColorMap assignment as "Tool activity".
+//   TIME (ms)         — tool durations plus Claude LLM streaming spans; one
+//                       unit, ≈-labeled wherever derived (OP-203).
+// A lane with no defined value anywhere collapses to a caption-only
+// unavailable note — never zero-height bars (provider-and-cost.md).
 
 const TC_BAR_WIDTH = 12;
 const TC_BAR_GAP = 6;
@@ -773,7 +778,80 @@ const TC_M_RIGHT = 14;
 const TC_LANE_H = 64;
 const TC_UNAVAILABLE_H = 14;
 /** Guarantees room for the longest "— unavailable (…)" caption even when very few calls make for a narrow plot. */
-const TC_MIN_WIDTH = 420;
+const TC_MIN_WIDTH = 460;
+
+/** Which call a timeline column (or Tools-table row) selects. */
+export interface TimelineSelection {
+  kind: 'tool' | 'llm';
+  /** Index into request.tools / request.llmCalls respectively. */
+  index: number;
+}
+
+export type TimelineEvent =
+  | { kind: 'tool'; tool: ToolCallInfo; toolIndex: number }
+  | { kind: 'llm'; call: LlmCallInfo; llmIndex: number };
+
+/** Carry-forward sort keys: each source list is chronological, so a missing timestamp inherits its predecessor's. */
+function carryForwardKeys<T>(list: T[], ts: (item: T) => string | undefined): number[] {
+  let last = Number.NEGATIVE_INFINITY;
+  return list.map((item) => {
+    const t = Date.parse(ts(item) ?? '');
+    if (Number.isFinite(t)) last = t;
+    return last;
+  });
+}
+
+/**
+ * The request's event sequence: LLM calls and tool calls merged on their
+ * timestamps (both arrays are already in log order), ties LLM-first. Shared
+ * by the timeline chart and the Call detail prev/next steppers so "the trail"
+ * is one ordering everywhere.
+ */
+export function timelineEvents(request: PromptRequest): TimelineEvent[] {
+  const llmCalls = request.llmCalls ?? [];
+  const tools = request.tools ?? [];
+  const llmKeys = carryForwardKeys(llmCalls, (c) => c.startedAt);
+  const toolKeys = carryForwardKeys(tools, (t) => t.startedAt);
+  const events: TimelineEvent[] = [];
+  let li = 0;
+  let ti = 0;
+  while (li < llmCalls.length || ti < tools.length) {
+    const takeLlm = li < llmCalls.length && (ti >= tools.length || llmKeys[li] <= toolKeys[ti]);
+    if (takeLlm) {
+      events.push({ kind: 'llm', call: llmCalls[li], llmIndex: li });
+      li += 1;
+    } else {
+      events.push({ kind: 'tool', tool: tools[ti], toolIndex: ti });
+      ti += 1;
+    }
+  }
+  return events;
+}
+
+/** Claude only: streaming span of an LLM call (first → last record), ≈ by nature. */
+export function llmCallSpanMs(call: LlmCallInfo): number | undefined {
+  if (!call.startedAt || !call.endedAt) return undefined;
+  const ms = Date.parse(call.endedAt) - Date.parse(call.startedAt);
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
+/**
+ * Context composition segments that provably sum to contextTokens: cache read
+ * and cache write are taken as reported; "fresh" is the remainder. This stays
+ * correct for both Claude semantics (input + cacheRead + cacheWrite) and
+ * Codex semantics (input_tokens already includes the cached subset).
+ */
+function contextSegments(call: LlmCallInfo): { label: string; value: number; color: string }[] {
+  const total = call.contextTokens ?? 0;
+  const cacheRead = Math.min(call.cacheReadTokens ?? 0, total);
+  const cacheWrite = Math.min(call.cacheCreationTokens ?? 0, Math.max(0, total - cacheRead));
+  const fresh = Math.max(0, total - cacheRead - cacheWrite);
+  return [
+    { label: 'Cache read', value: cacheRead, color: TOKEN_SERIES[0].color },
+    { label: 'Cache write', value: cacheWrite, color: TOKEN_SERIES[1].color },
+    { label: 'Fresh', value: fresh, color: TOKEN_SERIES[2].color }
+  ].filter((s) => s.value > 0);
+}
 
 interface ToolLaneLayout {
   captionY: number;
@@ -787,16 +865,19 @@ function toolLaneLayout(captionY: number, top: number, available: boolean): Tool
   return { captionY, top, bottom: top + (available ? TC_LANE_H : TC_UNAVAILABLE_H), height };
 }
 
-/** One lane of per-call bars, colored per-call by tool identity; absent values leave a gap, never a zero bar. */
-function renderToolLane(
+interface LaneBar {
+  value?: number;
+  color: string;
+}
+
+/** One lane of per-event bars; absent values leave a gap, never a zero bar. */
+function renderEventLane(
   laneLayer: SVGGElement,
-  tools: ToolCallInfo[],
   colX: (i: number) => number,
   plotRight: number,
   layout: ToolLaneLayout,
   caption: string,
-  values: (number | undefined)[],
-  colorFor: (tool: ToolCallInfo) => string,
+  bars: LaneBar[],
   formatValue: (v: number) => string
 ): void {
   const captionEl = svgEl('text', { x: TC_M_LEFT, y: layout.captionY, class: 'chart-caption', fill: TEXT_MUTED });
@@ -805,24 +886,65 @@ function renderToolLane(
   laneLayer.appendChild(
     svgEl('line', { x1: TC_M_LEFT, y1: layout.bottom, x2: plotRight, y2: layout.bottom, stroke: GRID, 'stroke-width': 1 })
   );
-  const maxValue = Math.max(1, ...values.filter((v): v is number => v !== undefined && v > 0));
+  const maxValue = Math.max(1, ...bars.map((b) => b.value).filter((v): v is number => v !== undefined && v > 0));
   let maxIndex = -1;
   let maxSeen = -Infinity;
-  values.forEach((v, i) => {
-    if (v === undefined || v <= 0) return;
-    const h = Math.max(1.5, (v / maxValue) * layout.height);
-    const bar = topRoundedRect(colX(i), layout.bottom - h, TC_BAR_WIDTH, h, 2);
-    bar.setAttribute('fill', colorFor(tools[i]));
-    laneLayer.appendChild(bar);
-    if (v > maxSeen) {
-      maxSeen = v;
+  bars.forEach((bar, i) => {
+    if (bar.value === undefined || bar.value <= 0) return;
+    const h = Math.max(1.5, (bar.value / maxValue) * layout.height);
+    const rect = topRoundedRect(colX(i), layout.bottom - h, TC_BAR_WIDTH, h, 2);
+    rect.setAttribute('fill', bar.color);
+    laneLayer.appendChild(rect);
+    if (bar.value > maxSeen) {
+      maxSeen = bar.value;
       maxIndex = i;
     }
   });
   if (maxIndex >= 0) {
     const cx = colX(maxIndex) + TC_BAR_WIDTH / 2;
     const barTop = layout.bottom - (maxSeen / maxValue) * layout.height;
-    laneLayer.appendChild(laneValueLabel(cx, barTop, layout.top, formatValue(maxSeen), colorFor(tools[maxIndex])));
+    laneLayer.appendChild(laneValueLabel(cx, barTop, layout.top, formatValue(maxSeen), bars[maxIndex].color));
+  }
+}
+
+/** CONTEXT lane: stacked single-unit token segments on the LLM columns only. */
+function renderContextLane(
+  laneLayer: SVGGElement,
+  events: TimelineEvent[],
+  colX: (i: number) => number,
+  plotRight: number,
+  layout: ToolLaneLayout
+): void {
+  const captionEl = svgEl('text', { x: TC_M_LEFT, y: layout.captionY, class: 'chart-caption', fill: TEXT_MUTED });
+  captionEl.textContent = 'CONTEXT (tokens)';
+  laneLayer.appendChild(captionEl);
+  laneLayer.appendChild(
+    svgEl('line', { x1: TC_M_LEFT, y1: layout.bottom, x2: plotRight, y2: layout.bottom, stroke: GRID, 'stroke-width': 1 })
+  );
+  const totals = events.map((e) => (e.kind === 'llm' ? e.call.contextTokens : undefined));
+  const maxValue = Math.max(1, ...totals.filter((v): v is number => v !== undefined && v > 0));
+  let maxIndex = -1;
+  let maxSeen = -Infinity;
+  events.forEach((event, i) => {
+    if (event.kind !== 'llm') return;
+    const total = event.call.contextTokens;
+    if (total === undefined || total <= 0) return;
+    let y = layout.bottom;
+    for (const segment of contextSegments(event.call)) {
+      const h = Math.max(0.75, (segment.value / maxValue) * layout.height);
+      const rect = svgEl('rect', { x: colX(i), y: y - h, width: TC_BAR_WIDTH, height: h, fill: segment.color });
+      laneLayer.appendChild(rect);
+      y -= h;
+    }
+    if (total > maxSeen) {
+      maxSeen = total;
+      maxIndex = i;
+    }
+  });
+  if (maxIndex >= 0) {
+    const cx = colX(maxIndex) + TC_BAR_WIDTH / 2;
+    const barTop = layout.bottom - (maxSeen / maxValue) * layout.height;
+    laneLayer.appendChild(laneValueLabel(cx, barTop, layout.top, formatTokensCompact(maxSeen), TOKEN_SERIES[0].color));
   }
 }
 
@@ -832,32 +954,124 @@ function unavailableLaneNote(laneLayer: SVGGElement, captionY: number, caption: 
   laneLayer.appendChild(el);
 }
 
-/**
- * Per-call sequence lanes for the "Prompt timeline" section (plan.md Concept
- * A): one column per tool call, IN/OUT/TIME bars aligned on the call-order
- * x-axis, hand-built SVG like the sibling charts (no charting library).
- */
-export function renderToolCallLanes(container: HTMLElement, tools: ToolCallInfo[]): void {
-  container.innerHTML = '';
+function fillToolTooltip(
+  tooltip: HTMLElement,
+  tool: ToolCallInfo,
+  toolIndex: number,
+  color: string
+): void {
+  tooltip.textContent = '';
+  const header = document.createElement('div');
+  header.className = 'tooltip-header';
+  header.textContent = `#${toolIndex + 1} ${tool.name}`;
+  tooltip.appendChild(header);
 
-  if (tools.length === 0) {
+  if (tool.inputPreview) tooltip.appendChild(tooltipRow(undefined, false, 'Target', tool.inputPreview));
+  tooltip.appendChild(tooltipRow(color, false, 'In', `${formatTokens(tool.inputChars)} chars`));
+  tooltip.appendChild(
+    tooltipRow(color, false, 'Out', tool.outputChars !== undefined ? `${formatTokens(tool.outputChars)} chars` : 'unavailable')
+  );
+  tooltip.appendChild(
+    tooltipRow(
+      color,
+      false,
+      'Time',
+      tool.durationMs !== undefined ? `${tool.durationSource === 'derived' ? '≈ ' : ''}${formatDurationMs(tool.durationMs)}` : 'unavailable'
+    )
+  );
+  if (tool.isError) tooltip.appendChild(tooltipRow(WARN_COLOR, false, 'Error', 'tool returned an error'));
+  if (tool.agentId) {
+    const bits = [`subagent ${tool.agentId.slice(0, 10)}…`];
+    if (tool.subagentModel) bits.push(shortModelName(tool.subagentModel));
+    if (tool.subagentTokens !== undefined) bits.push(`${formatTokensCompact(tool.subagentTokens)} tokens`);
+    if (tool.subagentCostUsd !== undefined) bits.push(formatUsd(tool.subagentCostUsd));
+    tooltip.appendChild(tooltipRow(undefined, false, 'Delegated', bits.join(' · ')));
+  }
+}
+
+function fillLlmTooltip(tooltip: HTMLElement, call: LlmCallInfo, llmIndex: number): void {
+  tooltip.textContent = '';
+  const header = document.createElement('div');
+  header.className = 'tooltip-header';
+  header.textContent = `LLM call L${llmIndex + 1}`;
+  if (call.model) {
+    const modelEl = document.createElement('span');
+    modelEl.className = 'tooltip-model';
+    modelEl.textContent = shortModelName(call.model);
+    header.appendChild(modelEl);
+  }
+  tooltip.appendChild(header);
+
+  if (call.contextTokens !== undefined) {
+    tooltip.appendChild(tooltipRow(undefined, false, 'Context', `${formatTokens(call.contextTokens)} tokens`));
+    for (const segment of contextSegments(call)) {
+      tooltip.appendChild(tooltipRow(segment.color, false, segment.label, formatTokens(segment.value)));
+    }
+  } else {
+    tooltip.appendChild(tooltipRow(undefined, false, 'Usage', 'unavailable in this log'));
+  }
+  if (call.outputTokens !== undefined) {
+    tooltip.appendChild(tooltipRow(TOKEN_SERIES[3].color, false, 'Output', `${formatTokens(call.outputTokens)} tokens`));
+  }
+  if (call.reasoningOutputTokens !== undefined && call.reasoningOutputTokens > 0) {
+    tooltip.appendChild(tooltipRow(undefined, false, 'Reasoning', `${formatTokens(call.reasoningOutputTokens)} tokens`));
+  }
+  if (call.thinkingTokens !== undefined && call.thinkingTokens > 0) {
+    tooltip.appendChild(tooltipRow(undefined, false, 'Thinking', `${formatTokens(call.thinkingTokens)} tokens`));
+  }
+  const span = llmCallSpanMs(call);
+  if (span !== undefined) tooltip.appendChild(tooltipRow(LLM_CALLS_COLOR, false, 'Time', `≈ ${formatDurationMs(span)}`));
+  if (call.costUsd !== undefined) tooltip.appendChild(tooltipRow(COST_COLOR, false, 'Cost (est.)', formatUsd(call.costUsd)));
+  if (call.stopReason) tooltip.appendChild(tooltipRow(undefined, false, 'Stop', call.stopReason.replace(/_/g, ' ')));
+}
+
+/**
+ * The "Prompt timeline" section body: the interleaved event-sequence chart
+ * (plans/2026-07/07/call-details Concept, OP-201/OP-202/OP-203). Hand-built
+ * SVG like the sibling charts. Clicking a column selects that call for the
+ * Call detail section below.
+ */
+export function renderPromptTimeline(
+  container: HTMLElement,
+  request: PromptRequest,
+  selected: TimelineSelection | undefined,
+  onSelect: (selection: TimelineSelection) => void
+): void {
+  container.innerHTML = '';
+  const events = timelineEvents(request);
+
+  if (events.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'No tool calls in this prompt.';
+    empty.textContent = 'No LLM or tool calls recorded for this prompt.';
     container.appendChild(empty);
     return;
   }
 
+  const tools = request.tools ?? [];
   const colors = categoryColorMap(tools.map((t) => t.name));
   const colorFor = (tool: ToolCallInfo): string => colors.get(tool.name) ?? COST_COLOR;
   const hasErrors = tools.some((t) => t.isError);
+  const hasLlm = events.some((e) => e.kind === 'llm');
+  const hasContext = events.some((e) => e.kind === 'llm' && e.call.contextTokens !== undefined);
+  const hasIn = tools.length > 0;
   const hasOut = tools.some((t) => t.outputChars !== undefined);
-  const hasTime = tools.some((t) => t.durationMs !== undefined);
+  const timeBars: LaneBar[] = events.map((event) => {
+    if (event.kind === 'tool') return { value: event.tool.durationMs, color: colorFor(event.tool) };
+    return { value: llmCallSpanMs(event.call), color: LLM_CALLS_COLOR };
+  });
+  const hasTime = timeBars.some((b) => b.value !== undefined);
 
   const wrapper = document.createElement('div');
   wrapper.className = 'chart-wrapper';
   const legend = document.createElement('div');
   legend.className = 'chart-legend';
+  if (hasLlm) legend.appendChild(legendItem(LLM_CALLS_COLOR, 'LLM call', 'glyph', '◆'));
+  if (hasContext) {
+    legend.appendChild(legendItem(TOKEN_SERIES[0].color, 'Cache read'));
+    legend.appendChild(legendItem(TOKEN_SERIES[1].color, 'Cache write'));
+    legend.appendChild(legendItem(TOKEN_SERIES[2].color, 'Fresh context'));
+  }
   for (const [name, color] of colors) legend.appendChild(legendItem(color, name));
   if (hasErrors) legend.appendChild(legendItem(WARN_COLOR, 'Error', 'glyph'));
   wrapper.appendChild(legend);
@@ -871,12 +1085,17 @@ export function renderToolCallLanes(container: HTMLElement, tools: ToolCallInfo[
   tooltip.style.display = 'none';
   wrapper.appendChild(tooltip);
 
-  const n = tools.length;
+  const n = events.length;
   const colX = (i: number): number => TC_M_LEFT + TC_BAR_GAP + i * (TC_BAR_WIDTH + TC_BAR_GAP);
   const width = Math.max(colX(n - 1) + TC_BAR_WIDTH + TC_BAR_GAP + TC_M_RIGHT, TC_MIN_WIDTH);
   const plotRight = width - TC_M_RIGHT;
 
-  const inLayout = toolLaneLayout(10, 20, true);
+  // marker row (LLM ◆ / error ▲) sits above the first lane
+  const markerY = 16;
+  const firstLaneCaptionY = markerY + 12;
+  const contextLayout = hasLlm ? toolLaneLayout(firstLaneCaptionY, firstLaneCaptionY + 10, hasContext) : undefined;
+  const afterContext = contextLayout ? contextLayout.bottom : firstLaneCaptionY - 24 + 10;
+  const inLayout = toolLaneLayout(afterContext + 24, afterContext + 24 + 8, hasIn);
   const outLayout = toolLaneLayout(inLayout.bottom + 24, inLayout.bottom + 24 + 8, hasOut);
   const timeLayout = toolLaneLayout(outLayout.bottom + 24, outLayout.bottom + 24 + 8, hasTime);
   const plotBottom = timeLayout.bottom;
@@ -889,95 +1108,87 @@ export function renderToolCallLanes(container: HTMLElement, tools: ToolCallInfo[
     viewBox: `0 0 ${width} ${chartHeight}`,
     role: 'img',
     'aria-label':
-      'Per tool call timeline: in, out, and time bars for every call in this prompt, in call order' +
+      'Prompt timeline: LLM calls and tool calls in sequence, with context tokens, in/out chars, and time lanes' +
+      (hasContext ? '' : hasLlm ? ', per-call usage unavailable for this provider' : '') +
       (hasTime ? '' : ', time unavailable for this provider')
   });
   scroll.appendChild(svg);
 
+  // selected-column highlight behind the lanes, matching the thread chart's treatment
+  if (selected) {
+    const selectedIndex = events.findIndex(
+      (e) => (e.kind === 'tool' && selected.kind === 'tool' && e.toolIndex === selected.index) ||
+        (e.kind === 'llm' && selected.kind === 'llm' && e.llmIndex === selected.index)
+    );
+    if (selectedIndex >= 0) {
+      svg.appendChild(
+        svgEl('rect', {
+          x: colX(selectedIndex) - TC_BAR_GAP / 2,
+          y: markerY - 12,
+          width: TC_BAR_WIDTH + TC_BAR_GAP,
+          height: plotBottom - (markerY - 12),
+          rx: 3,
+          class: 'overview-selected'
+        })
+      );
+    }
+  }
+
   const laneLayer = svgEl('g');
   svg.appendChild(laneLayer);
 
-  renderToolLane(laneLayer, tools, colX, plotRight, inLayout, 'IN (chars)', tools.map((t) => t.inputChars), colorFor, formatTokensCompact);
+  if (contextLayout) {
+    if (hasContext) {
+      renderContextLane(laneLayer, events, colX, plotRight, contextLayout);
+    } else {
+      unavailableLaneNote(laneLayer, contextLayout.captionY, 'CONTEXT (tokens)', 'no per-call usage in this log');
+    }
+  }
+
+  const inBars: LaneBar[] = events.map((e) => (e.kind === 'tool' ? { value: e.tool.inputChars, color: colorFor(e.tool) } : { color: '' }));
+  renderEventLane(laneLayer, colX, plotRight, inLayout, 'IN (chars)', inBars, formatTokensCompact);
 
   if (hasOut) {
-    renderToolLane(
-      laneLayer,
-      tools,
-      colX,
-      plotRight,
-      outLayout,
-      'OUT (chars)',
-      tools.map((t) => t.outputChars),
-      colorFor,
-      formatTokensCompact
+    const outBars: LaneBar[] = events.map((e) =>
+      e.kind === 'tool' ? { value: e.tool.outputChars, color: colorFor(e.tool) } : { color: '' }
     );
+    renderEventLane(laneLayer, colX, plotRight, outLayout, 'OUT (chars)', outBars, formatTokensCompact);
   } else {
     unavailableLaneNote(laneLayer, outLayout.captionY, 'OUT (chars)', 'no result recorded');
   }
 
   if (hasTime) {
-    renderToolLane(
-      laneLayer,
-      tools,
-      colX,
-      plotRight,
-      timeLayout,
-      'TIME',
-      tools.map((t) => t.durationMs),
-      colorFor,
-      formatDurationMs
-    );
+    renderEventLane(laneLayer, colX, plotRight, timeLayout, 'TIME', timeBars, formatDurationMs);
   } else {
     unavailableLaneNote(laneLayer, timeLayout.captionY, 'TIME', 'no per-call duration in this log');
   }
 
-  // error markers: reserved warning color + glyph, in a row above the IN lane
-  tools.forEach((tool, i) => {
-    if (!tool.isError) return;
-    const marker = svgEl('text', {
-      x: colX(i) + TC_BAR_WIDTH / 2,
-      y: inLayout.top - 4,
-      'text-anchor': 'middle',
-      class: 'chart-warn-marker',
-      fill: WARN_COLOR
-    });
-    marker.textContent = '▲';
-    laneLayer.appendChild(marker);
+  // marker row: ◆ on LLM columns, ▲ on errored tool columns (reserved warn color)
+  events.forEach((event, i) => {
+    if (event.kind === 'llm') {
+      const marker = svgEl('text', {
+        x: colX(i) + TC_BAR_WIDTH / 2,
+        y: markerY,
+        'text-anchor': 'middle',
+        class: 'chart-warn-marker',
+        fill: LLM_CALLS_COLOR
+      });
+      marker.textContent = '◆';
+      laneLayer.appendChild(marker);
+    } else if (event.tool.isError) {
+      const marker = svgEl('text', {
+        x: colX(i) + TC_BAR_WIDTH / 2,
+        y: markerY,
+        'text-anchor': 'middle',
+        class: 'chart-warn-marker',
+        fill: WARN_COLOR
+      });
+      marker.textContent = '▲';
+      laneLayer.appendChild(marker);
+    }
   });
 
   // ---- tooltip plumbing ----
-  const fillTooltip = (index: number): void => {
-    const tool = tools[index];
-    tooltip.textContent = '';
-    const header = document.createElement('div');
-    header.className = 'tooltip-header';
-    header.textContent = `#${index + 1} ${tool.name}`;
-    tooltip.appendChild(header);
-
-    if (tool.inputPreview) tooltip.appendChild(tooltipRow(undefined, false, 'Target', tool.inputPreview));
-    const color = colorFor(tool);
-    tooltip.appendChild(tooltipRow(color, false, 'In', `${formatTokens(tool.inputChars)} chars`));
-    tooltip.appendChild(
-      tooltipRow(color, false, 'Out', tool.outputChars !== undefined ? `${formatTokens(tool.outputChars)} chars` : 'unavailable')
-    );
-    tooltip.appendChild(
-      tooltipRow(
-        color,
-        false,
-        'Time',
-        tool.durationMs !== undefined ? `${tool.durationSource === 'derived' ? '≈ ' : ''}${formatDurationMs(tool.durationMs)}` : 'unavailable'
-      )
-    );
-    if (tool.isError) tooltip.appendChild(tooltipRow(WARN_COLOR, false, 'Error', 'tool returned an error'));
-    if (tool.agentId) {
-      const bits = [`subagent ${tool.agentId.slice(0, 10)}…`];
-      if (tool.subagentModel) bits.push(shortModelName(tool.subagentModel));
-      if (tool.subagentTokens !== undefined) bits.push(`${formatTokensCompact(tool.subagentTokens)} tokens`);
-      if (tool.subagentCostUsd !== undefined) bits.push(formatUsd(tool.subagentCostUsd));
-      tooltip.appendChild(tooltipRow(undefined, false, 'Delegated', bits.join(' · ')));
-    }
-  };
-
   const positionTooltip = (clientX: number, clientY: number): void => {
     tooltip.style.display = 'block';
     const rect = wrapper.getBoundingClientRect();
@@ -993,30 +1204,52 @@ export function renderToolCallLanes(container: HTMLElement, tools: ToolCallInfo[
   const hideTooltip = (): void => {
     tooltip.style.display = 'none';
   };
+  const fillTooltip = (index: number): void => {
+    const event = events[index];
+    if (event.kind === 'tool') fillToolTooltip(tooltip, event.tool, event.toolIndex, colorFor(event.tool));
+    else fillLlmTooltip(tooltip, event.call, event.llmIndex);
+  };
 
-  // ---- one hover/focus target per call --------------------------------------
-  tools.forEach((tool, index) => {
+  // ---- one hover/focus/click target per column --------------------------------
+  events.forEach((event, index) => {
     const x = colX(index);
-    const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'img' });
+    const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'button' });
     group.setAttribute(
       'aria-label',
-      `Call ${index + 1}: ${tool.name}, in ${formatTokens(tool.inputChars)} chars, ` +
-        `out ${tool.outputChars !== undefined ? `${formatTokens(tool.outputChars)} chars` : 'unavailable'}, ` +
-        `time ${tool.durationMs !== undefined ? formatDurationMs(tool.durationMs) : 'unavailable'}` +
-        (tool.isError ? ', error' : '')
+      event.kind === 'tool'
+        ? `Tool call ${event.toolIndex + 1}: ${event.tool.name}, in ${formatTokens(event.tool.inputChars)} chars, ` +
+            `out ${event.tool.outputChars !== undefined ? `${formatTokens(event.tool.outputChars)} chars` : 'unavailable'}, ` +
+            `time ${event.tool.durationMs !== undefined ? formatDurationMs(event.tool.durationMs) : 'unavailable'}` +
+            (event.tool.isError ? ', error' : '') +
+            '. Activate to inspect.'
+        : `LLM call ${event.llmIndex + 1}` +
+            (event.call.model ? `, ${shortModelName(event.call.model)}` : '') +
+            (event.call.contextTokens !== undefined
+              ? `, context ${formatTokens(event.call.contextTokens)} tokens`
+              : ', usage unavailable') +
+            '. Activate to inspect.'
     );
 
     const hit = svgEl('rect', {
       class: 'hit',
       x: x - TC_BAR_GAP / 2,
-      y: inLayout.top,
+      y: markerY - 12,
       width: TC_BAR_WIDTH + TC_BAR_GAP,
-      height: plotBottom - inLayout.top,
+      height: plotBottom - (markerY - 12),
       rx: 2,
       fill: 'transparent'
     });
     group.appendChild(hit);
 
+    const select = (): void =>
+      onSelect(event.kind === 'tool' ? { kind: 'tool', index: event.toolIndex } : { kind: 'llm', index: event.llmIndex });
+    group.addEventListener('click', select);
+    group.addEventListener('keydown', (ev: KeyboardEvent) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        select();
+      }
+    });
     group.addEventListener('pointermove', (ev: PointerEvent) => {
       fillTooltip(index);
       positionTooltip(ev.clientX, ev.clientY);
@@ -1032,18 +1265,18 @@ export function renderToolCallLanes(container: HTMLElement, tools: ToolCallInfo[
     svg.appendChild(group);
   });
 
-  // ---- x labels (call order, matching the Tools table '#') -------------------
+  // ---- x labels: '#k' tool columns (matching the Tools table '#'), 'Lk' LLM columns ----
   const labelStep = Math.max(1, Math.ceil(n / 25));
-  tools.forEach((_, index) => {
+  events.forEach((event, index) => {
     if (index % labelStep !== 0 && index !== n - 1) return;
     const label = svgEl('text', {
       x: colX(index) + TC_BAR_WIDTH / 2,
       y: xLabelY,
       'text-anchor': 'middle',
       class: 'chart-tick',
-      fill: TEXT_MUTED
+      fill: event.kind === 'llm' ? LLM_CALLS_COLOR : TEXT_MUTED
     });
-    label.textContent = `#${index + 1}`;
+    label.textContent = event.kind === 'llm' ? `L${event.llmIndex + 1}` : `#${event.toolIndex + 1}`;
     svg.appendChild(label);
   });
 

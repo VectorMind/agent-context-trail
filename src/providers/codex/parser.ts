@@ -5,12 +5,15 @@ import {
   ConversationSummary,
   CurrentStatusSnapshot,
   EMPTY_USAGE,
+  LlmCallInfo,
   PromptRequest,
   RateLimitStatus,
+  ToolCallDetail,
   ToolCallInfo,
   UsageTokens
 } from '../../domain/types';
 import { PricingService } from '../../pricing/pricingService';
+import { buildToolCallDetail, unavailableDetail } from '../callDetail';
 
 interface CodexTokenUsage {
   input_tokens?: number;
@@ -476,13 +479,34 @@ export async function parseCodexSession(
     if (record.type === 'event_msg' && payload?.type === 'token_count') {
       const info = payload.info as Record<string, unknown> | undefined;
       const lastTokenUsage = (info?.last_token_usage ?? {}) as CodexTokenUsage;
-      current.latestUsage = usageFromTokenUsage(lastTokenUsage);
+      const callUsage = usageFromTokenUsage(lastTokenUsage);
+      current.latestUsage = callUsage;
       current.latestReasoningOutputTokens = lastTokenUsage.reasoning_output_tokens;
       if (typeof info?.model_context_window === 'number') current.latestModelContextWindow = info.model_context_window;
       current.latestRateLimits = rateLimitsFromPayload(payload.rate_limits as CodexRateLimits | undefined);
       // One token_count event fires per LLM response within the turn (the
       // agentic tool-call loop can call the model several times per prompt).
       current.request.llmCallCount = (current.request.llmCallCount ?? 0) + 1;
+
+      // Per-call detail from last_token_usage. The event's timestamp is when
+      // usage was reported (after the response) — the only per-call time this
+      // log carries; no per-call duration is honestly derivable, so none is
+      // set. input_tokens is the full submitted context (cached is a subset,
+      // OpenAI semantics), mapped like the request-level usage for
+      // consistency with the request cost figure.
+      const llmCall: LlmCallInfo = {
+        index: (current.request.llmCalls ??= []).length,
+        startedAt: record.timestamp,
+        model: current.request.model,
+        contextTokens: lastTokenUsage.input_tokens,
+        inputTokens: lastTokenUsage.input_tokens,
+        cacheReadTokens: lastTokenUsage.cached_input_tokens,
+        outputTokens: lastTokenUsage.output_tokens,
+        reasoningOutputTokens: lastTokenUsage.reasoning_output_tokens,
+        costUsd: pricing.estimateCodexCost(current.request.model, callUsage).usd,
+        modelContextWindow: current.latestModelContextWindow
+      };
+      current.request.llmCalls.push(llmCall);
       continue;
     }
 
@@ -512,4 +536,46 @@ export async function parseCodexSession(
     totalCost: { usd: totalCostUsd, source: 'estimated' },
     currentStatus
   };
+}
+
+/**
+ * On-demand Call detail extraction (plans/2026-07/07/call-details, OP-101):
+ * locates one function_call / function_call_output pair by call_id and
+ * returns only the bounded excerpt — the full payload never leaves the host.
+ */
+export async function extractCodexToolCallDetail(filePath: string, toolCallId: string): Promise<ToolCallDetail> {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity
+  });
+
+  let input: unknown;
+  let inputFound = false;
+  let resultText: string | undefined;
+  let resultFound = false;
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes(toolCallId)) continue;
+    let record: RawRecord;
+    try {
+      record = JSON.parse(trimmed) as RawRecord;
+    } catch {
+      continue;
+    }
+    const payload = record.payload;
+    if (!payload || payload.call_id !== toolCallId) continue;
+    if (payload.type === 'function_call' && !inputFound) {
+      const argsString = typeof payload.arguments === 'string' ? payload.arguments : undefined;
+      input = parseJsonObject(argsString) ?? argsString;
+      inputFound = true;
+    } else if (payload.type === 'function_call_output' && !resultFound) {
+      resultText = typeof payload.output === 'string' ? payload.output : undefined;
+      resultFound = true;
+    }
+    if (inputFound && resultFound) break;
+  }
+
+  if (!inputFound) return unavailableDetail(toolCallId, 'tool call not found in the session log');
+  return buildToolCallDetail(toolCallId, input, resultText);
 }

@@ -14,6 +14,19 @@ here). Colors are VS Code theme CSS variables (`var(--vscode-charts-*)`,
 `var(--vscode-editor-*)`, ...), never hardcoded hex, so every chart repaints
 correctly across light, dark, and high-contrast themes without extra code.
 
+## Detail cards have a fixed shape
+
+A card that renders variable-size content (payload excerpts, argument
+lists) keeps a constant anatomy and constant zone heights regardless of
+that content's size: the same zones appear in the same order, and a zone
+whose data is absent states so inside its normal frame rather than
+collapsing, growing, or disappearing. A 3-line payload and a 200k-char
+payload produce the same card silhouette; only the zone contents differ.
+This keeps cards comparable while stepping through a sequence of calls and
+prevents huge payloads from dominating the page — density is served by
+excerpting (see surfaces-and-privacy.md "Payload excerpts"), never by
+letting the card grow.
+
 ## Two measures never share a plot
 
 Two measures of different units (tokens vs. cost, tokens vs. wall time, ...)

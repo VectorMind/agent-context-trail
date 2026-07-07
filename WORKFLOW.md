@@ -63,6 +63,27 @@ Keep packet dates as the day the packet starts. Use the ISO month as the bucket,
 
 Use `plans/README.md` for the layout note and keep `plans/open.md` and `plans/closed.md` as concise packet indexes when it is useful to distinguish active from completed work.
 
+## Open/Closed Index
+
+Track packets in `plans/open.md` and `plans/closed.md` as tables, not prose.
+Each row's `Description` cell stays a single short field: a compact
+status/metrics summary, plus a last-left-status or closure reason only when
+one is relevant. Do not restate the full plan or implementation narrative
+there — that detail belongs in the packet's own `plan.md`/`implementation.md`.
+
+`plans/open.md` columns: `Packet`, `Status`, `Description`.
+`plans/closed.md` columns: `Packet`, `Closed`, `Description`.
+
+When a packet's `implementation.md` progress marker reaches
+`[######] Done`, remove its row from `plans/open.md` and add a row to
+`plans/closed.md` with the date the packet was actually completed. Do not
+leave a completed packet listed as open pending a separate closure step.
+
+Periodically check `plans/open.md` rows against their packet's
+`implementation.md` marker; a row whose marker already reads `Done` (or whose
+body records a resolved verdict the marker itself never caught up to) should
+move to `plans/closed.md` rather than stay listed as open.
+
 ## Plan Shape
 
 `plan.md` should stay focused on the actual work package. Include the sections

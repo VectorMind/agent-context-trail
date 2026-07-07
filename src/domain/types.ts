@@ -73,6 +73,74 @@ export interface ToolCallInfo {
   subagentModel?: string;
 }
 
+/**
+ * One LLM call (model completion) inside a request. Per-provider honest
+ * (plans/2026-07/07/call-details): Claude carries full per-call usage and an
+ * estimated cost; Codex per-call usage from its token_count events; Copilot
+ * only round marks (timestamp, thinking tokens). Absent means "not in the
+ * source log", never zero.
+ */
+export interface LlmCallInfo {
+  /** 0-based position within the request's LLM call sequence. */
+  index: number;
+  startedAt?: string;
+  /**
+   * Claude only: timestamp of the call's last streamed record, so
+   * endedAt - startedAt ≈ the streaming span (excludes time to first token).
+   */
+  endedAt?: string;
+  model?: string;
+  /** Full context submitted with this call (fresh input + cache read + cache write). */
+  contextTokens?: number;
+  inputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+  /** Copilot: per-round thinking tokens when the round reports them. */
+  thinkingTokens?: number;
+  stopReason?: string;
+  /** Always estimated from the rate table; no provider reports per-call cost. */
+  costUsd?: number;
+  modelContextWindow?: number;
+}
+
+/**
+ * Bounded head/tail excerpt of a tool payload, trimmed host-side. Full
+ * payloads never cross into the webview (plans/2026-07/07/call-details
+ * OP-101/OP-102).
+ */
+export interface PayloadExcerpt {
+  headLines: string[];
+  /** Present only when lines were skipped between head and tail. */
+  tailLines?: string[];
+  totalChars: number;
+  totalLines: number;
+  /** Chars omitted between head and tail (0 when the excerpt is complete). */
+  skippedChars: number;
+  /** Copilot results: text reassembled from a serialized display-node tree. */
+  reconstructed?: boolean;
+}
+
+export interface ToolCallDetailField {
+  key: string;
+  value: string;
+}
+
+/** On-demand detail for one tool call, extracted from the provider log. */
+export interface ToolCallDetail {
+  toolCallId: string;
+  /** Top-level input fields except the payload body; values capped host-side. */
+  fields: ToolCallDetailField[];
+  /** The input's dominant text payload (file content, command, ...), excerpted. */
+  inputExcerpt?: PayloadExcerpt;
+  /** Which input field the excerpt came from (e.g. "content", "command"). */
+  inputPayloadKey?: string;
+  resultExcerpt?: PayloadExcerpt;
+  /** Reason the log has no locatable data; shown as-is, never fabricated. */
+  unavailable?: string;
+}
+
 /** One cache break inside a request, from message.diagnostics. */
 export interface CacheMissInfo {
   reason: string;
@@ -112,6 +180,8 @@ export interface PromptRequest {
   webFetchRequests?: number;
   cacheMisses?: CacheMissInfo[];
   tools?: ToolCallInfo[];
+  /** Per-LLM-call detail, in call order; provider depth varies (see LlmCallInfo). */
+  llmCalls?: LlmCallInfo[];
   reasoningOutputTokens?: number;
   timeToFirstTokenMs?: number;
   modelContextWindow?: number;

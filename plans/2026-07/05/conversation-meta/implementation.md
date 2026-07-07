@@ -1,7 +1,8 @@
 # Implementation Log
 
-[#####-] Survey done; enriched metadata implemented as Layout D vs baseline B
-(round-2 layout comparison); awaiting maintainer verdict.
+[######] Done - survey done; enriched metadata implemented as Layout D vs
+baseline B (round-2 layout comparison); maintainer verdict selected D (see
+"Round 2 Verdict - D Selected" below), specification updated to match.
 
 ## Files Changed
 

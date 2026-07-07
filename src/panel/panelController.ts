@@ -3,13 +3,14 @@ import {
   getClaudeSessionFilePath,
   listClaudeConversations
 } from '../providers/claude/discover';
-import { parseClaudeSession } from '../providers/claude/parser';
+import { extractClaudeToolCallDetail, parseClaudeSession } from '../providers/claude/parser';
 import { getCodexSessionFilePath, listCodexConversations } from '../providers/codex/discover';
-import { parseCodexSession } from '../providers/codex/parser';
+import { extractCodexToolCallDetail, parseCodexSession } from '../providers/codex/parser';
 import { getCopilotSessionFilePath, listCopilotConversations } from '../providers/copilot/discover';
-import { parseCopilotSession } from '../providers/copilot/parser';
+import { extractCopilotToolCallDetail, parseCopilotSession } from '../providers/copilot/parser';
+import { unavailableDetail } from '../providers/callDetail';
 import { PricingService } from '../pricing/pricingService';
-import { ConversationListItem, ProviderId } from '../domain/types';
+import { ConversationListItem, ProviderId, ToolCallDetail } from '../domain/types';
 import { ConversationDetailPayload, HostToWebviewMessage, WebviewToHostMessage } from './protocol';
 
 const PROVIDERS: ProviderId[] = ['claude', 'codex', 'copilot'];
@@ -75,6 +76,32 @@ export class PanelController implements vscode.Disposable {
       this.selectedConversation = { provider: message.provider, id: message.id };
       const detail = await this.loadDetail(message.provider, message.id);
       if (detail) this.post({ type: 'conversationDetail', detail });
+      return;
+    }
+    if (message.type === 'getToolCallDetail') {
+      const detail = await this.loadToolCallDetail(message.provider, message.conversationId, message.toolCallId);
+      this.post({ type: 'toolCallDetail', conversationId: message.conversationId, detail });
+    }
+  }
+
+  /** Bounded excerpt for one tool call, re-read from the provider log on demand. */
+  private async loadToolCallDetail(provider: ProviderId, conversationId: string, toolCallId: string): Promise<ToolCallDetail> {
+    try {
+      if (provider === 'claude') {
+        const filePath = this.workspacePath ? getClaudeSessionFilePath(this.workspacePath, conversationId) : undefined;
+        if (!filePath) return unavailableDetail(toolCallId, 'session file not found');
+        return await extractClaudeToolCallDetail(filePath, toolCallId);
+      }
+      if (provider === 'codex') {
+        const filePath = getCodexSessionFilePath(conversationId);
+        if (!filePath) return unavailableDetail(toolCallId, 'session file not found');
+        return await extractCodexToolCallDetail(filePath, toolCallId);
+      }
+      const filePath = getCopilotSessionFilePath(conversationId);
+      if (!filePath) return unavailableDetail(toolCallId, 'session file not found');
+      return await extractCopilotToolCallDetail(filePath, toolCallId);
+    } catch {
+      return unavailableDetail(toolCallId, 'could not read the session log');
     }
   }
 
@@ -805,6 +832,72 @@ export class PanelController implements vscode.Disposable {
     color: var(--vscode-descriptionForeground);
     font-variant-numeric: tabular-nums;
   }
+
+  /* ---- Call detail card (plans/2026-07/07/call-details) ---- */
+  .call-card { max-width: 640px; }
+  .call-steppers { display: flex; align-items: center; gap: 6px; }
+  .call-pos { font-size: 10px; color: var(--vscode-descriptionForeground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .call-step {
+    width: 22px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .call-step:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
+  .call-step:disabled { opacity: 0.35; cursor: default; }
+  .badge-warn {
+    background: var(--vscode-editorWarning-foreground, var(--vscode-charts-orange));
+    color: var(--vscode-editor-background);
+  }
+  .call-fields {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 6px 0 4px;
+    font-size: 11px;
+    align-items: baseline;
+  }
+  .call-field-key { color: var(--vscode-descriptionForeground); white-space: nowrap; }
+  .call-field-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .call-field-value.mono { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
+  .call-file-dir { color: var(--vscode-descriptionForeground); }
+  .call-file-name { font-weight: 600; }
+  .snapshot-wrap { margin-top: 10px; }
+  .snapshot-caption {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 4px;
+  }
+  /* Fixed zone height regardless of payload: 8 head + separator + 4 tail lines. */
+  .snapshot {
+    height: calc(13 * 1.5 * 11px + 12px);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px 8px;
+    border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--vscode-editorWidget-background, var(--vscode-editor-background)) 72%, transparent);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .snapshot-line { white-space: pre; }
+  .snapshot-sep {
+    color: var(--vscode-descriptionForeground);
+    text-align: center;
+    font-style: italic;
+    white-space: pre;
+  }
+  .snapshot-empty { color: var(--vscode-descriptionForeground); font-style: italic; font-family: var(--vscode-font-family, sans-serif); }
 
   .shares { margin-top: 14px; display: flex; flex-direction: column; gap: 9px; }
   .share-row { font-size: 11px; }

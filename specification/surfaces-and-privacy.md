@@ -128,6 +128,17 @@ buried policy.
 
 - Local-first: all data is read from local files the provider CLIs already
   write. The extension does not run its own server process to do so.
+- **Payload excerpts are bounded and trimmed host-side; full payloads never
+  cross into the webview.** When a surface needs the content of a tool
+  payload (a tool call's input arguments or result), the extension host
+  reads the provider log on demand, locates the one call, and ships only a
+  bounded excerpt (fixed head/tail line counts, capped line and field
+  lengths, plus honest totals such as size and skipped-character counts).
+  The webview never receives, caches, or renders a full payload under any
+  interaction. Text recovered indirectly (for example reassembled from a
+  serialized display tree rather than a literal logged string) is labeled
+  as reconstructed, never presented as the exact logged content. The user's
+  own prompt text is not a tool payload and is exempt from this rule.
 - No telemetry, no analytics backend, no upload of prompts, transcripts, or
   file contents, under any configuration.
 - Any data the extension retains beyond a single read, such as for a future

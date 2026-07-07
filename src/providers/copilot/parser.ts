@@ -4,11 +4,14 @@ import {
   addUsage,
   ConversationSummary,
   EMPTY_USAGE,
+  LlmCallInfo,
   PromptRequest,
+  ToolCallDetail,
   ToolCallInfo,
   UsageTokens
 } from '../../domain/types';
 import { PricingService } from '../../pricing/pricingService';
+import { buildToolCallDetail, unavailableDetail } from '../callDetail';
 
 /**
  * VS Code's chatSessions/*.jsonl is an append log of patch operations onto
@@ -244,6 +247,18 @@ function toPromptRequest(raw: RawCopilotRequest, index: number, pricing: Pricing
   const rounds = raw.result?.metadata?.toolCallRounds ?? [];
   const reasoningOutputTokens = rounds.reduce((sum, r) => sum + (r.thinking?.tokens ?? 0), 0);
 
+  // One toolCallRound ≈ one LLM call. The log carries no per-round token or
+  // cost data (promptTokens/completionTokens are request-level only), so
+  // these stay skeletal round marks: timestamp, thinking tokens when
+  // reported. Absent stays absent, never zero (provider-and-cost.md).
+  const llmCalls: LlmCallInfo[] = rounds.map((round, i) => ({
+    index: i,
+    startedAt: round.timestamp ? new Date(round.timestamp).toISOString() : undefined,
+    model,
+    thinkingTokens: round.thinking?.tokens,
+    modelContextWindow: contextWindow
+  }));
+
   const thinkingParts = (raw.response ?? []).filter((p) => p.kind === 'thinking');
   const textParts = (raw.response ?? []).filter((p) => p.kind === undefined);
   const thinkingChars = thinkingParts.reduce((sum, p) => sum + (p.text?.length ?? 0), 0);
@@ -260,6 +275,7 @@ function toPromptRequest(raw: RawCopilotRequest, index: number, pricing: Pricing
     toolCallCount,
     durationMs,
     llmCallCount: rounds.length > 0 ? rounds.length : undefined,
+    llmCalls: llmCalls.length > 0 ? llmCalls : undefined,
     stopReason: raw.result?.errorDetails?.message,
     modelsUsed: model ? [model] : undefined,
     thinkingBlocks: thinkingParts.length > 0 ? thinkingParts.length : undefined,
@@ -340,4 +356,85 @@ export async function parseCopilotSession(
     totalUsage,
     totalCost: { usd: totalCostUsd, source: 'estimated' }
   };
+}
+
+/**
+ * Copilot stores some tool results as a serialized prompt-render node tree
+ * ($mid/ctor/children) rather than plain strings. Walk it collecting `text`
+ * and string `value` leaves; anything recovered this way is labeled
+ * reconstructed, never presented as the literal logged string.
+ */
+function collectTreeText(value: unknown, out: string[], depth = 0): void {
+  if (depth > 12 || value === null || value === undefined) return;
+  if (typeof value === 'string') return; // bare strings are handled by the caller
+  if (Array.isArray(value)) {
+    for (const entry of value) collectTreeText(entry, out, depth + 1);
+    return;
+  }
+  if (typeof value !== 'object') return;
+  const record = value as Record<string, unknown>;
+  if (typeof record.text === 'string' && record.text) out.push(record.text);
+  for (const key of ['value', 'node', 'children', 'content']) {
+    if (typeof record[key] === 'string') {
+      if (key === 'value' && record[key]) out.push(record[key] as string);
+    } else {
+      collectTreeText(record[key], out, depth + 1);
+    }
+  }
+}
+
+/**
+ * On-demand Call detail extraction (plans/2026-07/07/call-details, OP-101):
+ * reconstructs the session document, locates one tool call by id, and returns
+ * only the bounded excerpt. Results that only exist as a serialized display
+ * tree are text-walked and labeled reconstructed; missing results stay
+ * honestly absent.
+ */
+export async function extractCopilotToolCallDetail(filePath: string, toolCallId: string): Promise<ToolCallDetail> {
+  const doc = await reconstructDocument(filePath);
+
+  let argumentsJson: string | undefined;
+  let found = false;
+  let resultRaw: RawToolCallResultContent | undefined;
+  for (const raw of doc.requests ?? []) {
+    for (const round of raw.result?.metadata?.toolCallRounds ?? []) {
+      for (const call of round.toolCalls ?? []) {
+        if (call.id !== toolCallId) continue;
+        argumentsJson = call.arguments;
+        found = true;
+        resultRaw = raw.result?.metadata?.toolCallResults?.[toolCallId];
+        break;
+      }
+      if (found) break;
+    }
+    if (found) break;
+  }
+
+  if (!found) return unavailableDetail(toolCallId, 'tool call not found in the session log');
+
+  let input: unknown = argumentsJson;
+  if (argumentsJson) {
+    try {
+      input = JSON.parse(argumentsJson) as unknown;
+    } catch {
+      input = argumentsJson;
+    }
+  }
+
+  // Plain string values first; fall back to walking the serialized node tree.
+  let resultText: string | undefined;
+  let reconstructed = false;
+  const plainParts = (resultRaw?.content ?? []).map((c) => c.value).filter((v): v is string => typeof v === 'string' && !!v);
+  if (plainParts.length > 0) {
+    resultText = plainParts.join('\n');
+  } else if (resultRaw) {
+    const parts: string[] = [];
+    collectTreeText(resultRaw, parts);
+    if (parts.length > 0) {
+      resultText = parts.join('');
+      reconstructed = true;
+    }
+  }
+
+  return buildToolCallDetail(toolCallId, input, resultText, reconstructed || undefined);
 }

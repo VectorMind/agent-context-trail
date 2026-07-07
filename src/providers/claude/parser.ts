@@ -1,8 +1,19 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { addUsage, CacheMissInfo, ConversationSummary, EMPTY_USAGE, PromptRequest, ToolCallInfo, UsageTokens } from '../../domain/types';
+import {
+  addUsage,
+  CacheMissInfo,
+  ConversationSummary,
+  EMPTY_USAGE,
+  LlmCallInfo,
+  PromptRequest,
+  ToolCallInfo,
+  UsageTokens
+} from '../../domain/types';
 import { PricingService } from '../../pricing/pricingService';
+import { buildToolCallDetail, unavailableDetail } from '../callDetail';
+import { ToolCallDetail } from '../../domain/types';
 
 interface ContentBlock {
   type?: string;
@@ -305,6 +316,8 @@ export async function parseClaudeSession(
   let lastMessageId: string | undefined;
   /** tool_use id → its ToolCallInfo, for matching results across records. */
   let openTools = new Map<string, ToolCallInfo>();
+  /** The in-flight LLM call, so later records sharing its message.id extend its span. */
+  let currentLlmCall: LlmCallInfo | undefined;
 
   const pushCurrent = () => {
     if (current) {
@@ -338,6 +351,7 @@ export async function parseClaudeSession(
     if (isRealUserPrompt(record)) {
       pushCurrent();
       openTools = new Map();
+      currentLlmCall = undefined;
       current = {
         id: record.uuid ?? `req-${requests.length}`,
         index: requests.length,
@@ -370,8 +384,24 @@ export async function parseClaudeSession(
       const isNewLlmCall = !messageId || messageId !== lastMessageId;
       lastMessageId = messageId;
       if (isNewLlmCall) {
-        current.usage = addUsage(current.usage, usageFromRecord(record));
+        const callUsage = usageFromRecord(record);
+        current.usage = addUsage(current.usage, callUsage);
         current.llmCallCount = (current.llmCallCount ?? 0) + 1;
+
+        currentLlmCall = {
+          index: (current.llmCalls ??= []).length,
+          startedAt: record.timestamp,
+          endedAt: record.timestamp,
+          model: record.message?.model,
+          contextTokens: callUsage.inputTokens + callUsage.cacheReadTokens + callUsage.cacheCreationTokens,
+          inputTokens: callUsage.inputTokens,
+          cacheReadTokens: callUsage.cacheReadTokens,
+          cacheCreationTokens: callUsage.cacheCreationTokens,
+          outputTokens: callUsage.outputTokens,
+          stopReason: record.message?.stop_reason,
+          costUsd: pricing.estimateClaudeCost(record.message?.model, callUsage).usd
+        };
+        current.llmCalls.push(currentLlmCall);
 
         const usage = record.message?.usage;
         if (usage?.service_tier) current.serviceTier = usage.service_tier;
@@ -388,6 +418,11 @@ export async function parseClaudeSession(
         if (miss?.type) {
           (current.cacheMisses ??= []).push({ reason: miss.type, missedTokens: miss.cache_missed_input_tokens });
         }
+      } else if (currentLlmCall) {
+        // Later lines of the same API response: extend the streaming span and
+        // pick up the stop_reason, which often lands only on the final line.
+        if (record.timestamp) currentLlmCall.endedAt = record.timestamp;
+        if (record.message?.stop_reason) currentLlmCall.stopReason = record.message.stop_reason;
       }
 
       const content = record.message?.content;
@@ -471,4 +506,61 @@ export async function parseClaudeSession(
     totalUsage,
     totalCost: { usd: totalCostUsd, source: 'estimated' }
   };
+}
+
+/** Joins a tool_result's content (string or text-block array) into plain text. */
+function toolResultContentText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  const parts = content
+    .map((block) => (block && typeof block === 'object' && typeof (block as ContentBlock).text === 'string' ? (block as ContentBlock).text : ''))
+    .filter((t): t is string => !!t);
+  return parts.length > 0 ? parts.join('\n') : undefined;
+}
+
+/**
+ * On-demand Call detail extraction (plans/2026-07/07/call-details, OP-101):
+ * re-reads the session file, locates one tool call by its tool_use id, and
+ * returns only the bounded excerpt — the full payload never leaves the host.
+ */
+export async function extractClaudeToolCallDetail(filePath: string, toolCallId: string): Promise<ToolCallDetail> {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity
+  });
+
+  let input: unknown;
+  let inputFound = false;
+  let resultText: string | undefined;
+  let resultFound = false;
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes(toolCallId)) continue;
+    let record: RawRecord;
+    try {
+      record = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    const content = record.message?.content;
+    if (!Array.isArray(content)) continue;
+    if (record.type === 'assistant' && !inputFound) {
+      const block = content.find((b) => b?.type === 'tool_use' && b.id === toolCallId);
+      if (block) {
+        input = block.input;
+        inputFound = true;
+      }
+    } else if (record.type === 'user' && !resultFound) {
+      const block = content.find((b) => b?.type === 'tool_result' && b.tool_use_id === toolCallId);
+      if (block) {
+        resultText = toolResultContentText(block.content);
+        resultFound = true;
+      }
+    }
+    if (inputFound && resultFound) break;
+  }
+
+  if (!inputFound) return unavailableDetail(toolCallId, 'tool call not found in the session log');
+  return buildToolCallDetail(toolCallId, input, resultText);
 }
