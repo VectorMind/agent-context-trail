@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0 - 08.07.2026
+
+- GitHub Copilot support: real prompts, tokens, resolved model, and tool
+  calls read directly from VS Code's own chat log — no setup step — plus
+  Copilot's own premium-request credit figure shown alongside the
+  `estimated` cost as its own signal.
+- Request detail: a per-request tool-call and model-call timeline with
+  per-call latency, and a call detail card for inspecting any single call.
+- Panel now keeps the selected call and timeline scroll position across
+  conversation refreshes instead of resetting them.
+
 ## 0.0.1 - 05.07.2026
 
 First marketplace release.

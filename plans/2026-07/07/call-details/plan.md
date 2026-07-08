@@ -250,11 +250,14 @@ Reassessed at validation close:
   and Codex per-call time, estimated-labeled per-call cost. No
   specification file needed changes.
 - The two candidate durable topics from the pre-work checkpoint survived
-  implementation and are put to maintainer review (not added):
+  implementation, were reviewed with the maintainer, and accepted
+  2026-07-07:
   1. "Payload excerpts are bounded and trimmed host-side; full payloads
-     never cross into the webview" — candidate for surfaces-and-privacy.md.
-  2. "Detail cards have fixed shape: constant zones and height independent
-     of payload size" — candidate for ui-design.md.
+     never cross into the webview" — added to `surfaces-and-privacy.md`
+     under "Privacy".
+  2. "Detail cards have a fixed shape: constant zones and height
+     independent of payload size" — added to `ui-design.md` as its own
+     rule, ahead of "Two measures never share a plot".
 
 ## Status (closed 2026-07-07)
 

@@ -2222,6 +2222,17 @@ function refreshStackData(): void {
   }
 }
 
+function preserveSelectedCall(
+  request: PromptRequest | undefined,
+  selection: TimelineSelection | undefined
+): TimelineSelection | undefined {
+  if (!request || !selection) return undefined;
+  if (selection.kind === 'tool') {
+    return request.tools?.[selection.index] ? selection : undefined;
+  }
+  return request.llmCalls?.[selection.index] ? selection : undefined;
+}
+
 function toggleSection(id: SectionId): void {
   state.sectionsCollapsed[id] = !state.sectionsCollapsed[id];
   persistState();
@@ -2308,6 +2319,8 @@ function applyDetail(detail: ConversationDetailPayload | undefined, preserveSele
     detail.provider === state.detail.provider &&
     detail.id === state.detail.id;
   const previousRequestIndex = sameConversation ? state.selectedRequestIndex : undefined;
+  const previousSelectedCall = sameConversation ? state.selectedCall : undefined;
+  const previousPromptExpanded = sameConversation ? state.promptExpanded : false;
   state.detail = detail;
   state.selectedRequestIndex =
     detail && detail.requests.length > 0
@@ -2315,9 +2328,14 @@ function applyDetail(detail: ConversationDetailPayload | undefined, preserveSele
         ? Math.min(previousRequestIndex, detail.requests.length - 1)
         : detail.requests.length - 1
       : undefined;
+  const selectedRequest =
+    detail && state.selectedRequestIndex !== undefined ? detail.requests[state.selectedRequestIndex] : undefined;
   state.loadingId = undefined;
-  state.promptExpanded = false;
-  state.selectedCall = undefined;
+  state.promptExpanded = previousPromptExpanded;
+  state.selectedCall =
+    sameConversation && state.selectedRequestIndex === previousRequestIndex
+      ? preserveSelectedCall(selectedRequest, previousSelectedCall)
+      : undefined;
   if (detail) state.selectedProvider = detail.provider;
 }
 
@@ -2343,6 +2361,10 @@ function render(): void {
   const app = root();
   const previousStack = app.querySelector('.stack-pane');
   const previousScroll = previousStack ? previousStack.scrollTop : 0;
+  const previousTimelineScroll = previousStack?.querySelector(
+    'section[data-section="toolTimeline"] .chart-scroll'
+  ) as HTMLElement | null;
+  const previousTimelineScrollLeft = previousTimelineScroll?.scrollLeft ?? 0;
 
   app.innerHTML = '';
   if (LAYOUT_EXPERIMENTS) renderDesignBar(app);
@@ -2361,6 +2383,8 @@ function render(): void {
   // never animate or jump the page.
   const stack = app.querySelector('.stack-pane');
   if (stack) stack.scrollTop = previousScroll;
+  const timelineScroll = app.querySelector('section[data-section="toolTimeline"] .chart-scroll') as HTMLElement | null;
+  if (timelineScroll) timelineScroll.scrollLeft = previousTimelineScrollLeft;
 }
 
 window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) => {
@@ -2372,7 +2396,7 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
     applyDetail(message.selected, true);
     render();
   } else if (message.type === 'conversationDetail') {
-    applyDetail(message.detail, false);
+    applyDetail(message.detail, true);
     render();
   } else if (message.type === 'toolCallDetail') {
     const provider = state.detail?.provider ?? state.selectedProvider;

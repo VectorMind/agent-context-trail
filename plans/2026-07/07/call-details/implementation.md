@@ -50,6 +50,25 @@
   chips, honest Copilot absence text); prev/next steppers walk
   `timelineEvents` — the same ordering the chart draws.
 
+## Same-day Follow-up (2026-07-07, post-validation)
+
+- `src/webview/main.ts` `applyDetail`: a `conversationDetail` refresh (e.g.
+  re-selecting the same conversation) now preserves `selectedCall` and
+  `promptExpanded` when the refreshed detail is the same conversation and
+  request, via `preserveSelectedCall` (drops the selection only if the
+  refreshed data no longer has that tool/LLM call at that index) — matches
+  surfaces-and-privacy.md's "updates the panels below in place" rule, which
+  previously only covered `selectedRequestIndex`, not the deeper call
+  selection this packet added.
+- `render()` now preserves the Prompt timeline's horizontal `chart-scroll`
+  position across re-renders (captured before, restored after), the same
+  treatment already given to the stack pane's vertical scroll — needed
+  once selecting a call could trigger a full re-render while deep in a
+  wide (100+ column) timeline.
+- Specification checkpoint closed out: both candidate topics from the close
+  checkpoint were reviewed and accepted into `surfaces-and-privacy.md` and
+  `ui-design.md` (see `plan.md`).
+
 ## Decisions Taken During Execution
 
 - Codex context composition: `input_tokens` is the full submitted context
