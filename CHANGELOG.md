@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1 - 09.07.2026
+
+- Conversations table: session duration column, title plus last-activity
+  filters, paging capped at 100 conversations per page, and a bounded
+  vertically scrollable table with sticky headers for larger workspaces.
+- Status surfaces now distinguish **Provider Limits (Last seen)** from
+  **Last Context Status**, keep the context panel directly under provider
+  limits, and mark stale rate-limit snapshots after a reset instead of
+  presenting them as if they were still current.
+- Cost-unavailable providers now fall back more cleanly to their own latest
+  provider signal in the status bar and panel, including Codex's latest
+  workspace rate-limit snapshot.
+
 ## 0.1.0 - 08.07.2026
 
 - GitHub Copilot support: real prompts, tokens, resolved model, and tool
