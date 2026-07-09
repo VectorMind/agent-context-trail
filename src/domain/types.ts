@@ -29,6 +29,8 @@ export interface RateLimitStatus {
   primary?: RateLimitWindowStatus;
   secondary?: RateLimitWindowStatus;
   rateLimitReachedType?: string;
+  /** Timestamp of the last provider snapshot seen in local source logs. */
+  observedAt?: string;
 }
 
 export interface ConversationContextStatus {

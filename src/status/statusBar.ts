@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ConversationSummary, PromptRequest } from '../domain/types';
+import { ConversationSummary, PromptRequest, RateLimitStatus } from '../domain/types';
 import { formatUsd } from '../shared/format';
 
 export class StatusBarController implements vscode.Disposable {
@@ -37,9 +37,9 @@ export class StatusBarController implements vscode.Disposable {
 
   /**
    * Cost is the default headline signal, but it's honestly unavailable for
-   * providers (e.g. Codex) that don't report per-token pricing. Rather than
-   * show "n/a | n/a" by default, fall back to that provider's own economic
-   * signal (rate-limit consumption), then to a plain prompt count.
+   * providers that don't report per-token pricing. Rather than show "n/a | n/a"
+   * by default, fall back to that provider's own economic signal
+   * (last-seen rate-limit consumption), then to a plain prompt count.
    */
   private primaryText(last: PromptRequest): string {
     const summary = this.summary!;
@@ -60,16 +60,14 @@ export class StatusBarController implements vscode.Disposable {
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
     md.appendMarkdown(`**${summary.title ?? 'Untitled conversation'}**\n\n`);
-    md.appendMarkdown(
-      `_${summary.requests.length} prompt iteration${summary.requests.length === 1 ? '' : 's'} · ${providerLabel}_\n\n`
-    );
+    md.appendMarkdown(`_${summary.requests.length} prompt iteration${summary.requests.length === 1 ? '' : 's'} | ${providerLabel}_\n\n`);
     md.appendMarkdown('---\n\n');
     if (last.cost.usd !== undefined || summary.totalCost.usd !== undefined) {
       md.appendMarkdown(`Last call: **${formatUsd(last.cost.usd)}**  \n`);
       md.appendMarkdown(`Conversation total: **${formatUsd(summary.totalCost.usd)}**\n\n`);
       md.appendMarkdown(`_Cost is ${summary.totalCost.source}; token detail is in the panel._\n\n`);
     } else {
-      md.appendMarkdown(`_${providerLabel} does not report per-token cost; rate-limit consumption is shown instead._\n\n`);
+      md.appendMarkdown(`_${providerLabel} does not report per-token cost; last-seen rate-limit consumption is shown instead._\n\n`);
     }
     appendRateLimits(md, summary);
     appendContextStatus(md, summary);
@@ -92,8 +90,12 @@ function appendRateLimits(md: vscode.MarkdownString, summary: ConversationSummar
   }
   if (windows.length === 0) return;
 
-  const prefix = rateLimits.planType ? `${rateLimits.planType} plan · ` : '';
-  md.appendMarkdown(`${prefix}${windows.join(' · ')}\n\n`);
+  const bits: string[] = [];
+  if (rateLimits.planType) bits.push(`${rateLimits.planType} plan`);
+  bits.push(...windows);
+  if (rateLimits.observedAt) bits.push(`seen ${formatExact(rateLimits.observedAt)}`);
+  if (isRateLimitSnapshotStale(rateLimits)) bits.push('stale after reset');
+  md.appendMarkdown(`Last seen provider limits: ${bits.join(' | ')}\n\n`);
 }
 
 function appendContextStatus(md: vscode.MarkdownString, summary: ConversationSummary): void {
@@ -102,16 +104,16 @@ function appendContextStatus(md: vscode.MarkdownString, summary: ConversationSum
 
   md.appendMarkdown(`Current context: **${formatContextFill(context.contextFillPercent)}**`);
   if (context.modelContextWindow !== undefined) {
-    md.appendMarkdown(` · capacity ${formatTokensCompact(context.modelContextWindow)}`);
+    md.appendMarkdown(` | capacity ${formatTokensCompact(context.modelContextWindow)}`);
   }
   if (context.contextUsedTokens !== undefined) {
-    md.appendMarkdown(` · used ${formatTokensCompact(context.contextUsedTokens)}`);
+    md.appendMarkdown(` | used ${formatTokensCompact(context.contextUsedTokens)}`);
   }
   if (context.reservedOutputTokens !== undefined) {
-    md.appendMarkdown(` · reserved output ${formatTokensCompact(context.reservedOutputTokens)}`);
+    md.appendMarkdown(` | reserved output ${formatTokensCompact(context.reservedOutputTokens)}`);
   }
   if (context.longContextMode) {
-    md.appendMarkdown(` · ${context.longContextMode}`);
+    md.appendMarkdown(` | ${context.longContextMode}`);
   }
   md.appendMarkdown('\n\n');
 }
@@ -125,4 +127,27 @@ function formatTokensCompact(value: number): string {
   if (value >= 1_000_000) return `${trim(value / 1_000_000)}M`;
   if (value >= 1_000) return `${trim(value / 1_000)}K`;
   return String(value);
+}
+
+function formatExact(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+}
+
+function isRateLimitSnapshotStale(rateLimits: RateLimitStatus): boolean {
+  return [rateLimits.primary, rateLimits.secondary].some((window) =>
+    isRateLimitWindowSnapshotStale(window, rateLimits.observedAt)
+  );
+}
+
+function isRateLimitWindowSnapshotStale(
+  window: { resetsAt?: string } | undefined,
+  observedAt: string | undefined
+): boolean {
+  if (!window?.resetsAt) return false;
+  const resetMs = Date.parse(window.resetsAt);
+  if (!Number.isFinite(resetMs) || resetMs > Date.now()) return false;
+  if (!observedAt) return true;
+  const observedMs = Date.parse(observedAt);
+  return !Number.isFinite(observedMs) || observedMs < resetMs;
 }

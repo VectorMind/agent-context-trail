@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ConversationListItem } from '../../domain/types';
+import { ConversationListItem, RateLimitStatus } from '../../domain/types';
 import { PricingService } from '../../pricing/pricingService';
 import { scanCodexSessionMeta } from './parser';
 
@@ -24,6 +24,7 @@ interface CachedMeta {
   totalUsage: ConversationListItem['totalUsage'];
   totalCostUsd: number;
   workspacePath?: string;
+  latestRateLimits?: RateLimitStatus;
 }
 
 const metaCache = new Map<string, { mtimeMs: number; meta: CachedMeta }>();
@@ -114,25 +115,33 @@ export function getCodexSessionFilePath(sessionId: string): string | undefined {
   return filePathBySessionId.get(sessionId);
 }
 
+async function getSessionMeta(
+  session: CodexSessionFile,
+  titleFromIndex: string | undefined,
+  pricing: PricingService
+): Promise<CachedMeta> {
+  const cached = metaCache.get(session.filePath);
+  const meta =
+    cached && cached.mtimeMs === session.mtimeMs
+      ? cached.meta
+      : await scanCodexSessionMeta(session.filePath, titleFromIndex, pricing);
+  if (titleFromIndex && meta.title !== titleFromIndex) {
+    meta.title = titleFromIndex;
+  }
+  if (!(cached && cached.mtimeMs === session.mtimeMs)) {
+    metaCache.set(session.filePath, { mtimeMs: session.mtimeMs, meta });
+  }
+  return meta;
+}
+
 export async function listCodexConversations(workspacePath: string, pricing: PricingService): Promise<ConversationListItem[]> {
   const sessions = walkRolloutFiles(codexSessionsRoot());
   const titles = readSessionIndex();
   const items: ConversationListItem[] = [];
 
   for (const session of sessions) {
-    const cached = metaCache.get(session.filePath);
     const titleFromIndex = titles.get(session.sessionId)?.thread_name;
-
-    const meta =
-      cached && cached.mtimeMs === session.mtimeMs
-        ? cached.meta
-        : await scanCodexSessionMeta(session.filePath, titleFromIndex, pricing);
-    if (titleFromIndex && meta.title !== titleFromIndex) {
-      meta.title = titleFromIndex;
-    }
-    if (!(cached && cached.mtimeMs === session.mtimeMs)) {
-      metaCache.set(session.filePath, { mtimeMs: session.mtimeMs, meta });
-    }
+    const meta = await getSessionMeta(session, titleFromIndex, pricing);
     if (!meta.workspacePath || !isWithinWorkspace(meta.workspacePath, workspacePath)) continue;
 
     const item: ConversationListItem = {
@@ -153,4 +162,28 @@ export async function listCodexConversations(workspacePath: string, pricing: Pri
   }
 
   return items.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+}
+
+export async function getLatestCodexRateLimits(workspacePath: string, pricing: PricingService): Promise<RateLimitStatus | undefined> {
+  const sessions = walkRolloutFiles(codexSessionsRoot());
+  const titles = readSessionIndex();
+  let latest:
+    | {
+        observedAt: string;
+        rateLimits: RateLimitStatus;
+      }
+    | undefined;
+
+  for (const session of sessions) {
+    const titleFromIndex = titles.get(session.sessionId)?.thread_name;
+    const meta = await getSessionMeta(session, titleFromIndex, pricing);
+    if (!meta.workspacePath || !isWithinWorkspace(meta.workspacePath, workspacePath) || !meta.latestRateLimits) continue;
+
+    const observedAt = meta.latestRateLimits.observedAt ?? meta.lastAt ?? new Date(session.mtimeMs).toISOString();
+    if (!latest || observedAt.localeCompare(latest.observedAt) > 0) {
+      latest = { observedAt, rateLimits: meta.latestRateLimits };
+    }
+  }
+
+  return latest?.rateLimits;
 }

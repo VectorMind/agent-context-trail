@@ -45,6 +45,7 @@ interface CodexMeta {
   totalUsage: UsageTokens;
   totalCostUsd: number;
   workspacePath?: string;
+  latestRateLimits?: RateLimitStatus;
 }
 
 interface PendingTurn {
@@ -79,7 +80,7 @@ function usageFromTokenUsage(tokens: CodexTokenUsage | undefined): UsageTokens {
   };
 }
 
-function rateLimitsFromPayload(raw: CodexRateLimits | undefined): RateLimitStatus | undefined {
+function rateLimitsFromPayload(raw: CodexRateLimits | undefined, observedAt?: string): RateLimitStatus | undefined {
   if (!raw) return undefined;
   return {
     limitId: raw.limit_id,
@@ -98,7 +99,8 @@ function rateLimitsFromPayload(raw: CodexRateLimits | undefined): RateLimitStatu
           resetsAt: unixSecondsToIso(raw.secondary.resets_at)
         }
       : undefined,
-    rateLimitReachedType: raw.rate_limit_reached_type
+    rateLimitReachedType: raw.rate_limit_reached_type,
+    observedAt
   };
 }
 
@@ -236,6 +238,7 @@ export async function scanCodexSessionMeta(
   let totalUsage: UsageTokens = { ...EMPTY_USAGE };
   let totalCostUsd = 0;
   let requestCount = 0;
+  let latestRateLimits: RateLimitStatus | undefined;
   let current: PendingTurn | null = null;
 
   const finalize = () => {
@@ -313,6 +316,7 @@ export async function scanCodexSessionMeta(
       current.latestUsage = usageFromTokenUsage(lastTokenUsage);
       current.latestReasoningOutputTokens = lastTokenUsage.reasoning_output_tokens;
       if (typeof info?.model_context_window === 'number') current.latestModelContextWindow = info.model_context_window;
+      latestRateLimits = rateLimitsFromPayload(payload.rate_limits as CodexRateLimits | undefined, record.timestamp);
       continue;
     }
 
@@ -330,7 +334,8 @@ export async function scanCodexSessionMeta(
     requestCount,
     totalUsage,
     totalCostUsd,
-    workspacePath
+    workspacePath,
+    latestRateLimits
   };
 }
 
@@ -483,7 +488,7 @@ export async function parseCodexSession(
       current.latestUsage = callUsage;
       current.latestReasoningOutputTokens = lastTokenUsage.reasoning_output_tokens;
       if (typeof info?.model_context_window === 'number') current.latestModelContextWindow = info.model_context_window;
-      current.latestRateLimits = rateLimitsFromPayload(payload.rate_limits as CodexRateLimits | undefined);
+      current.latestRateLimits = rateLimitsFromPayload(payload.rate_limits as CodexRateLimits | undefined, record.timestamp);
       // One token_count event fires per LLM response within the turn (the
       // agentic tool-call loop can call the model several times per prompt).
       current.request.llmCallCount = (current.request.llmCallCount ?? 0) + 1;

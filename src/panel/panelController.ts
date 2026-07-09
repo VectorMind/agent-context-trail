@@ -4,7 +4,7 @@ import {
   listClaudeConversations
 } from '../providers/claude/discover';
 import { extractClaudeToolCallDetail, parseClaudeSession } from '../providers/claude/parser';
-import { getCodexSessionFilePath, listCodexConversations } from '../providers/codex/discover';
+import { getCodexSessionFilePath, getLatestCodexRateLimits, listCodexConversations } from '../providers/codex/discover';
 import { extractCodexToolCallDetail, parseCodexSession } from '../providers/codex/parser';
 import { getCopilotSessionFilePath, listCopilotConversations } from '../providers/copilot/discover';
 import { extractCopilotToolCallDetail, parseCopilotSession } from '../providers/copilot/parser';
@@ -157,6 +157,8 @@ export class PanelController implements vscode.Disposable {
       if (!filePath) return undefined;
 
       const summary = await parseCodexSession(filePath, id, undefined, this.pricing);
+      const latestRateLimits =
+        this.workspacePath ? await getLatestCodexRateLimits(this.workspacePath, this.pricing) : summary.currentStatus?.rateLimits;
       return {
         provider: 'codex',
         id,
@@ -166,7 +168,13 @@ export class PanelController implements vscode.Disposable {
         requests: summary.requests,
         totalUsage: summary.totalUsage,
         totalCost: summary.totalCost,
-        currentStatus: summary.currentStatus
+        currentStatus:
+          summary.currentStatus || latestRateLimits
+            ? {
+                ...summary.currentStatus,
+                rateLimits: latestRateLimits ?? summary.currentStatus?.rateLimits
+              }
+            : undefined
       };
     }
 
@@ -487,6 +495,7 @@ export class PanelController implements vscode.Disposable {
 
   .overview-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     padding: 2px 0 8px;
@@ -502,11 +511,59 @@ export class PanelController implements vscode.Disposable {
     font-size: 12px;
   }
   .filter-input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+  .filter-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .filter-pill,
+  .pager-button {
+    padding: 3px 9px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+  }
+  .filter-pill:hover,
+  .pager-button:hover:not(:disabled) {
+    color: var(--vscode-foreground);
+    background: var(--vscode-toolbar-hoverBackground);
+  }
+  .filter-pill.active {
+    color: var(--vscode-badge-foreground);
+    background: var(--vscode-badge-background);
+    border-color: transparent;
+    font-weight: 600;
+  }
   .overview-count { font-size: 11px; color: var(--vscode-descriptionForeground); }
+  .overview-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 0 8px;
+  }
+  .overview-page-label {
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+  }
+  .pager-buttons { display: flex; gap: 6px; }
+  .pager-button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
 
-  .table-scroll { overflow-x: auto; }
+  .table-scroll {
+    overflow: auto;
+    max-height: 520px;
+    border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
+    border-radius: 6px;
+  }
   .conv-table { border-collapse: collapse; width: 100%; font-size: 12px; }
   .conv-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     background: var(--vscode-editor-background);
     text-align: left;
     border-bottom: 1px solid var(--vscode-panel-border);

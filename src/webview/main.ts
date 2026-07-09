@@ -54,9 +54,10 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
 const LAYOUT_EXPERIMENTS = false;
 type LayoutId = 'A' | 'B' | 'C' | 'D';
 const DEFAULT_LAYOUT: LayoutId = 'D';
-type SortKey = 'title' | 'firstAt' | 'lastAt' | 'requestCount' | 'totalTokens' | 'totalCostUsd';
+type SortKey = 'title' | 'firstAt' | 'lastAt' | 'durationMs' | 'requestCount' | 'totalTokens' | 'totalCostUsd';
 type SortDir = 'asc' | 'desc';
 type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline' | 'callDetail';
+type TableTimeFilter = 'all' | 'day' | 'week' | 'month';
 /** Tools table (Layout D request card): '#' is call order, not a sortable metric. */
 type ToolSortKey = 'order' | 'name' | 'target' | 'in' | 'out' | 'time';
 
@@ -65,7 +66,7 @@ const LAYOUTS: { id: LayoutId; label: string; hint: string }[] = [
 ];
 
 const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] = [
-  { id: 'limits', title: 'Provider Limits', icon: '≡', hint: 'Provider plan and rate-limit usage' },
+  { id: 'limits', title: 'Provider Limits (Last seen)', icon: '≡', hint: 'Last recorded provider plan and rate-limit usage' },
   { id: 'chart', title: 'Tokens per conversation', icon: '▦', hint: 'Token totals per conversation' },
   { id: 'table', title: 'Conversations', icon: '☰', hint: 'Sortable, filterable conversations table' },
   { id: 'context', title: 'Current Context Status', icon: '≣', hint: 'Selected conversation context occupancy' },
@@ -73,6 +74,14 @@ const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] =
   { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' },
   { id: 'toolTimeline', title: 'Prompt timeline', icon: '▥', hint: 'LLM and tool calls of the selected prompt, in sequence' },
   { id: 'callDetail', title: 'Call detail', icon: '⌖', hint: 'Bounded detail for the selected LLM or tool call' }
+];
+
+const TABLE_PAGE_SIZE = 100;
+const TABLE_TIME_FILTERS: { key: TableTimeFilter; label: string; days?: number }[] = [
+  { key: 'all', label: 'All time' },
+  { key: 'day', label: 'Last day', days: 1 },
+  { key: 'week', label: 'Last week', days: 7 },
+  { key: 'month', label: 'Last month', days: 30 }
 ];
 
 interface PersistedState {
@@ -94,6 +103,8 @@ interface State {
   sortKey: SortKey;
   sortDir: SortDir;
   filter: string;
+  tableTimeFilter: TableTimeFilter;
+  tablePage: number;
   /** Layouts B and C: panels collapsed to their heading bar. */
   sectionsCollapsed: Partial<Record<SectionId, boolean>>;
   /** Layout D: tools table sort, shared across whichever request is selected. */
@@ -133,6 +144,8 @@ const state: State = {
   sortKey: 'lastAt',
   sortDir: 'desc',
   filter: '',
+  tableTimeFilter: 'all',
+  tablePage: 0,
   sectionsCollapsed: persisted?.sectionsCollapsed ?? {},
   toolsSortKey: 'order',
   toolsSortDir: 'asc',
@@ -215,14 +228,49 @@ function formatPercentValue(percent: number | undefined): string | undefined {
   return percent === undefined ? undefined : `${percent.toFixed(1)}%`;
 }
 
+function conversationDurationMs(item: ConversationListItem): number | undefined {
+  if (!item.firstAt) return undefined;
+  const startMs = Date.parse(item.firstAt);
+  const endMs = Date.parse(item.lastAt);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return undefined;
+  return Math.max(endMs - startMs, 0);
+}
+
+function formatConversationDuration(item: ConversationListItem): string {
+  const durationMs = conversationDurationMs(item);
+  return durationMs === undefined ? 'â€”' : formatDurationMs(durationMs);
+}
+
 function limitsSummaryText(status: CurrentStatusSnapshot | undefined): string {
   if (!status?.rateLimits) return 'unavailable';
   const parts: string[] = [];
+  if (isRateLimitSnapshotStale(status.rateLimits)) parts.push('stale');
   if (status.rateLimits.planType) parts.push(status.rateLimits.planType);
   if (status.rateLimits.primary?.usedPercent !== undefined) {
     parts.push(`${status.rateLimits.primary.usedPercent.toFixed(0)}% used`);
   }
-  return parts.length > 0 ? parts.join(' · ') : 'unavailable';
+  if (!isRateLimitSnapshotStale(status.rateLimits) && status.rateLimits.observedAt) {
+    parts.push(`seen ${formatRelative(status.rateLimits.observedAt)}`);
+  }
+  return parts.length > 0 ? parts.join(' | ') : 'unavailable';
+}
+
+function isRateLimitSnapshotStale(rateLimits: NonNullable<CurrentStatusSnapshot['rateLimits']>): boolean {
+  return [rateLimits.primary, rateLimits.secondary].some((window) =>
+    isRateLimitWindowSnapshotStale(window, rateLimits.observedAt)
+  );
+}
+
+function isRateLimitWindowSnapshotStale(
+  window: { resetsAt?: string } | undefined,
+  observedAt: string | undefined
+): boolean {
+  if (!window?.resetsAt) return false;
+  const resetMs = Date.parse(window.resetsAt);
+  if (!Number.isFinite(resetMs) || resetMs > Date.now()) return false;
+  if (!observedAt) return true;
+  const observedMs = Date.parse(observedAt);
+  return !Number.isFinite(observedMs) || observedMs < resetMs;
 }
 
 function activeConversationId(): string | undefined {
@@ -254,21 +302,37 @@ function hasContextStatus(provider: ProviderId, status: CurrentStatusSnapshot | 
 
 function visibleSections(): { id: SectionId; title: string; icon: string; hint: string }[] {
   const status = state.detail?.currentStatus;
-  return SECTIONS.filter((section) => {
+  const visible = SECTIONS.filter((section) => {
     if (section.id === 'limits') return hasProviderLimits(state.selectedProvider, status);
     if (section.id === 'context') return hasContextStatus(state.selectedProvider, status);
     return true;
-  });
+  }).map((section) =>
+    section.id === 'context'
+      ? {
+          ...section,
+          title: 'Last Context Status',
+          hint: 'Last recorded selected-conversation context occupancy'
+        }
+      : section
+  );
+  const contextIndex = visible.findIndex((section) => section.id === 'context');
+  const limitsIndex = visible.findIndex((section) => section.id === 'limits');
+  if (contextIndex > limitsIndex && limitsIndex !== -1) {
+    const [contextSection] = visible.splice(contextIndex, 1);
+    visible.splice(limitsIndex + 1, 0, contextSection);
+  }
+  return visible;
 }
 
 // ---- sorting / filtering ----------------------------------------------------
 
-const DEFAULT_DESC: ReadonlySet<SortKey> = new Set(['firstAt', 'lastAt', 'requestCount', 'totalTokens', 'totalCostUsd']);
+const DEFAULT_DESC: ReadonlySet<SortKey> = new Set(['firstAt', 'lastAt', 'durationMs', 'requestCount', 'totalTokens', 'totalCostUsd']);
 
 const SORT_LABELS: Record<SortKey, string> = {
   title: 'title',
   firstAt: 'first message',
   lastAt: 'last message',
+  durationMs: 'session duration',
   requestCount: 'prompts',
   totalTokens: 'tokens',
   totalCostUsd: 'cost'
@@ -285,6 +349,14 @@ function compareItems(a: ConversationListItem, b: ConversationListItem): number 
     if (!av) return 1; // missing timestamps sink to the bottom either way
     if (!bv) return -1;
     return sign * av.localeCompare(bv); // ISO strings sort chronologically
+  }
+  if (sortKey === 'durationMs') {
+    const av = conversationDurationMs(a);
+    const bv = conversationDurationMs(b);
+    if (av === undefined && bv === undefined) return 0;
+    if (av === undefined) return 1;
+    if (bv === undefined) return -1;
+    return sign * (av - bv);
   }
   const av = a[sortKey];
   const bv = b[sortKey];
@@ -321,11 +393,44 @@ function toolsSortArrow(key: ToolSortKey): string {
   return state.toolsSortDir === 'asc' ? ' ▲' : ' ▼';
 }
 
-function visibleItems(): ConversationListItem[] {
+function matchesTableTimeFilter(item: ConversationListItem): boolean {
+  if (state.tableTimeFilter === 'all') return true;
+  const lastAtMs = Date.parse(item.lastAt);
+  if (!Number.isFinite(lastAtMs)) return false;
+  const days = TABLE_TIME_FILTERS.find((filter) => filter.key === state.tableTimeFilter)?.days;
+  if (!days) return true;
+  return lastAtMs >= Date.now() - days * 24 * 60 * 60 * 1000;
+}
+
+function filteredItems(): ConversationListItem[] {
   const items = [...(state.conversationsByProvider[state.selectedProvider] ?? [])];
   items.sort(compareItems);
   const titleNeedle = state.filter.trim().toLowerCase();
-  return items.filter((item) => !titleNeedle || item.title.toLowerCase().includes(titleNeedle));
+  return items.filter((item) => (!titleNeedle || item.title.toLowerCase().includes(titleNeedle)) && matchesTableTimeFilter(item));
+}
+
+function tablePageCount(items: ConversationListItem[]): number {
+  return Math.max(1, Math.ceil(items.length / TABLE_PAGE_SIZE));
+}
+
+function clampTablePage(items: ConversationListItem[]): void {
+  state.tablePage = Math.max(0, Math.min(state.tablePage, tablePageCount(items) - 1));
+}
+
+function paginatedItems(items: ConversationListItem[]): ConversationListItem[] {
+  clampTablePage(items);
+  const start = state.tablePage * TABLE_PAGE_SIZE;
+  return items.slice(start, start + TABLE_PAGE_SIZE);
+}
+
+function tablePageLabel(items: ConversationListItem[]): string {
+  if (items.length === 0) return 'No conversations';
+  clampTablePage(items);
+  const start = state.tablePage * TABLE_PAGE_SIZE + 1;
+  const end = Math.min(items.length, (state.tablePage + 1) * TABLE_PAGE_SIZE);
+  const total = (state.conversationsByProvider[state.selectedProvider] ?? []).length;
+  const suffix = items.length === total ? '' : ` filtered from ${total}`;
+  return `Showing ${start}-${end} of ${items.length}${suffix}`;
 }
 
 function openConversation(id: string): void {
@@ -388,6 +493,7 @@ function selectCall(selection: TimelineSelection): void {
 
 function selectProvider(provider: ProviderId): void {
   state.selectedProvider = provider;
+  state.tablePage = 0;
   const items = state.conversationsByProvider[provider] ?? [];
   if (state.detail?.provider !== provider) {
     state.detail = undefined;
@@ -519,7 +625,7 @@ function renderSidebarSortRow(container: HTMLElement): void {
 }
 
 function renderSidebarList(container: HTMLElement): void {
-  const items = visibleItems();
+  const items = filteredItems();
   const list = document.createElement('div');
   list.className = 'conversation-list';
 
@@ -763,7 +869,7 @@ function renderProviderLimitsSection(container: HTMLElement): void {
   if (!detail) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'Select a conversation to inspect provider limits.';
+    empty.textContent = 'Select a conversation to inspect last seen provider limits.';
     container.appendChild(empty);
     return;
   }
@@ -772,7 +878,7 @@ function renderProviderLimitsSection(container: HTMLElement): void {
   if (!status?.rateLimits) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = `No provider limits were recorded for ${PROVIDER_LABELS[detail.provider]}.`;
+    empty.textContent = `No provider-limit snapshot was recorded for ${PROVIDER_LABELS[detail.provider]}.`;
     container.appendChild(empty);
     return;
   }
@@ -781,14 +887,21 @@ function renderProviderLimitsSection(container: HTMLElement): void {
   block.className = 'status-block';
   const body = document.createElement('div');
   body.className = 'status-card';
-  if (status.rateLimits.planType || status.rateLimits.limitId || status.rateLimits.rateLimitReachedType) {
+  if (
+    status.rateLimits.planType ||
+    status.rateLimits.limitId ||
+    status.rateLimits.rateLimitReachedType ||
+    status.rateLimits.observedAt
+  ) {
     const summary = document.createElement('div');
     summary.className = 'status-card-summary';
     const bits: string[] = [];
     if (status.rateLimits.planType) bits.push(`plan ${status.rateLimits.planType}`);
     if (status.rateLimits.limitId) bits.push(status.rateLimits.limitId);
     if (status.rateLimits.rateLimitReachedType) bits.push(`reached ${status.rateLimits.rateLimitReachedType}`);
-    summary.textContent = bits.join(' · ');
+    if (status.rateLimits.observedAt) bits.push(`last seen ${formatExact(status.rateLimits.observedAt)}`);
+    if (isRateLimitSnapshotStale(status.rateLimits)) bits.push('stale after reset');
+    summary.textContent = bits.join(' | ');
     body.appendChild(summary);
   }
 
@@ -798,6 +911,7 @@ function renderProviderLimitsSection(container: HTMLElement): void {
     const windowDuration = formatWindowDuration(window.windowMinutes);
     if (windowDuration) bits.push(windowDuration);
     if (window.resetsAt) bits.push(`resets ${formatExact(window.resetsAt)}`);
+    if (isRateLimitWindowSnapshotStale(window, status.rateLimits.observedAt)) bits.push('stale after reset');
     body.appendChild(
       compactStatusMeter({
         usedText: window.usedPercent !== undefined ? `${formatPercentValue(window.usedPercent)} used` : 'used unavailable',
@@ -805,7 +919,7 @@ function renderProviderLimitsSection(container: HTMLElement): void {
           window.usedPercent !== undefined ? `${formatPercentValue(Math.max(0, 100 - window.usedPercent))} remaining` : undefined,
         fillPercent: window.usedPercent,
         tone: limitTone(window.usedPercent),
-        meta: bits.join(' · ')
+        meta: bits.join(' | ')
       })
     );
   }
@@ -819,7 +933,7 @@ function renderContextStatusSection(container: HTMLElement): void {
   if (!detail) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'Select a conversation to inspect current context status.';
+    empty.textContent = 'Select a conversation to inspect last context status.';
     container.appendChild(empty);
     return;
   }
@@ -828,7 +942,7 @@ function renderContextStatusSection(container: HTMLElement): void {
   if (!status?.context) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = `No context status was recorded for ${PROVIDER_LABELS[detail.provider]}.`;
+    empty.textContent = `No last context status was recorded for ${PROVIDER_LABELS[detail.provider]}.`;
     container.appendChild(empty);
     return;
   }
@@ -1955,6 +2069,7 @@ const TABLE_COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'requestCount', label: 'Prompts', numeric: true },
   { key: 'firstAt', label: 'First message' },
   { key: 'lastAt', label: 'Last message' },
+  { key: 'durationMs', label: 'Session duration' },
   { key: 'totalTokens', label: 'Tokens', numeric: true },
   { key: 'totalCostUsd', label: 'Cost', numeric: true }
 ];
@@ -1964,7 +2079,7 @@ function renderTable(container: HTMLElement, items: ConversationListItem[]): voi
   if (items.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = state.filter.trim() ? 'No conversation matches the filter.' : emptyMessage();
+    empty.textContent = state.filter.trim() || state.tableTimeFilter !== 'all' ? 'No conversation matches the filter.' : emptyMessage();
     container.appendChild(empty);
     return;
   }
@@ -2007,6 +2122,7 @@ function renderTable(container: HTMLElement, items: ConversationListItem[]): voi
       { text: String(item.requestCount), numeric: true },
       { text: formatShortDate(item.firstAt), tooltip: formatExact(item.firstAt) },
       { text: formatRelative(item.lastAt), tooltip: formatExact(item.lastAt) },
+      { text: formatConversationDuration(item), tooltip: item.firstAt ? `${formatExact(item.firstAt)} -> ${formatExact(item.lastAt)}` : undefined },
       { text: formatTokensCompact(item.totalTokens), tooltip: `${formatTokens(item.totalTokens)} tokens`, numeric: true },
       { text: formatUsd(item.totalCostUsd), numeric: true }
     ];
@@ -2040,6 +2156,9 @@ interface StackRefs {
   chartBody?: HTMLElement;
   tableResults?: HTMLElement;
   tableCount?: HTMLElement;
+  tablePageLabel?: HTMLElement;
+  tablePrevButton?: HTMLButtonElement;
+  tableNextButton?: HTMLButtonElement;
   summaries: Partial<Record<SectionId, HTMLElement>>;
 }
 let stackRefs: StackRefs = { summaries: {} };
@@ -2125,21 +2244,68 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
     filter.placeholder = 'Filter by title…';
     filter.value = state.filter;
     filter.setAttribute('aria-label', 'Filter conversations by title');
+    const quickFilters = document.createElement('div');
+    quickFilters.className = 'filter-pills';
+    for (const quickFilter of TABLE_TIME_FILTERS) {
+      const button = document.createElement('button');
+      button.className = 'filter-pill' + (state.tableTimeFilter === quickFilter.key ? ' active' : '');
+      button.textContent = quickFilter.label;
+      button.title = `Filter conversations by last message: ${quickFilter.label.toLowerCase()}`;
+      button.addEventListener('click', () => {
+        state.tableTimeFilter = quickFilter.key;
+        state.tablePage = 0;
+        render();
+      });
+      quickFilters.appendChild(button);
+    }
     const count = document.createElement('span');
     count.className = 'overview-count';
     count.textContent = sectionSummary('table', items);
-    toolbar.append(filter);
+    toolbar.append(filter, quickFilters);
     toolbar.appendChild(count);
     body.appendChild(toolbar);
 
+    const pager = document.createElement('div');
+    pager.className = 'overview-pager';
+    const pageLabel = document.createElement('span');
+    pageLabel.className = 'overview-page-label';
+    pageLabel.textContent = tablePageLabel(items);
+    const pagerButtons = document.createElement('div');
+    pagerButtons.className = 'pager-buttons';
+    const prev = document.createElement('button');
+    prev.className = 'pager-button';
+    prev.textContent = 'Prev';
+    prev.disabled = state.tablePage === 0;
+    prev.addEventListener('click', () => {
+      if (state.tablePage === 0) return;
+      state.tablePage -= 1;
+      render();
+    });
+    const next = document.createElement('button');
+    next.className = 'pager-button';
+    next.textContent = 'Next';
+    next.disabled = state.tablePage >= tablePageCount(items) - 1;
+    next.addEventListener('click', () => {
+      if (state.tablePage >= tablePageCount(items) - 1) return;
+      state.tablePage += 1;
+      render();
+    });
+    pagerButtons.append(prev, next);
+    pager.append(pageLabel, pagerButtons);
+    body.appendChild(pager);
+
     const results = document.createElement('div');
     body.appendChild(results);
-    renderTable(results, items);
+    renderTable(results, paginatedItems(items));
 
     stackRefs.tableResults = results;
     stackRefs.tableCount = count;
+    stackRefs.tablePageLabel = pageLabel;
+    stackRefs.tablePrevButton = prev;
+    stackRefs.tableNextButton = next;
     filter.addEventListener('input', () => {
       state.filter = filter.value;
+      state.tablePage = 0;
       refreshStackData();
     });
     return;
@@ -2209,13 +2375,16 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
 
 /** Re-render only the data-dependent stack pieces so the filter input keeps focus. */
 function refreshStackData(): void {
-  const items = visibleItems();
+  const items = filteredItems();
   if (stackRefs.chartBody) {
     stackRefs.chartBody.innerHTML = '';
     renderSectionBody('chart', stackRefs.chartBody, items);
   }
-  if (stackRefs.tableResults) renderTable(stackRefs.tableResults, items);
+  if (stackRefs.tableResults) renderTable(stackRefs.tableResults, paginatedItems(items));
   if (stackRefs.tableCount) stackRefs.tableCount.textContent = sectionSummary('table', items);
+  if (stackRefs.tablePageLabel) stackRefs.tablePageLabel.textContent = tablePageLabel(items);
+  if (stackRefs.tablePrevButton) stackRefs.tablePrevButton.disabled = state.tablePage === 0;
+  if (stackRefs.tableNextButton) stackRefs.tableNextButton.disabled = state.tablePage >= tablePageCount(items) - 1;
   for (const id of ['chart', 'table'] as SectionId[]) {
     const summary = stackRefs.summaries[id];
     if (summary) summary.textContent = sectionSummary(id, items);
@@ -2266,7 +2435,7 @@ function renderStack(container: HTMLElement, layout: 'B' | 'C' | 'D'): void {
   renderWorkspaceScope(stack);
   renderTabs(stack);
 
-  const items = visibleItems();
+  const items = filteredItems();
 
   for (const section of visibleSections()) {
     const collapsed = !!state.sectionsCollapsed[section.id];

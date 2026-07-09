@@ -39,23 +39,26 @@ order:
 - **Conversations table** - scoped to the current workspace, grouped by
   provider (Copilot, Codex, Claude), titled as the respective CLI or VS Code
   would label them, with per-conversation metadata columns: request count,
-  first message, last message, total tokens, estimated cost. Do not repeat
-  per-conversation workspace-path labels in this table once the top workspace
-  scope is shown. Every column sorts on heading click; default order is last
-  message, newest first. A title filter narrows the table without stealing
-  focus.
+  first message, last message, session duration, total tokens, estimated cost.
+  Do not repeat per-conversation workspace-path labels in this table once the
+  top workspace scope is shown. Every column sorts on heading click; default
+  order is last message, newest first. A title filter and last-activity window
+  filter narrow the table without stealing focus. The table must page in
+  batches of at most 100 conversations and keep its own bounded vertical
+  scroll rather than expanding without limit.
 - **Provider Limits** - a distinct panel above context status for
   provider-global status such as rate-limit windows or plan usage. The meter
   header must place used on the left and remaining on the right, and the bar
   itself must still read only as used/fill rather than as two competing
   fills. Providers that do not expose real provider-limit data do not render
   a placeholder Provider Limits panel.
-- **Current Context Status** - a distinct panel for selected-conversation
-  context occupancy, total context capacity, reserved-for-output budget, and
-  long-context or expensive-context mode when available. Its header should
-  present both token and percentage values for used and remaining when the
-  provider exposes them. Providers that do not expose a real current-context
-  surface do not render a placeholder Current Context Status panel.
+- **Last Context Status** - a distinct panel for the last recorded
+  selected-conversation context occupancy, total context capacity,
+  reserved-for-output budget, and long-context or expensive-context mode when
+  available. It sits directly below Provider Limits. Its header should present
+  both token and percentage values for used and remaining when the provider
+  exposes them. Providers that do not expose a real current-context surface do
+  not render a placeholder Last Context Status panel.
 - **Conversation (thread view)** - the selected conversation, containing:
   - a chart with one visual unit per request, showing that request's token
     composition and cost, scaled to the conversation's own range rather than a
@@ -87,10 +90,10 @@ Panel interaction rules:
 - Current Status must follow the selected conversation for conversation-scoped
   context state. It must not stay pinned to an unrelated latest conversation
   once the user has selected a different conversation in the panel.
-- Current context status is related to the selected request's token
-  composition, but it is not identical to it. Request detail explains the
-  request's own token parts; Current Status may additionally show total context
-  capacity, reserved-for-output budget, fill percentage, and long-context or
+- Last context status is related to the selected request's token composition,
+  but it is not identical to it. Request detail explains the request's own
+  token parts; this panel may additionally show total context capacity,
+  reserved-for-output budget, fill percentage, and long-context or
   expensive-context mode for the selected conversation.
 - Every panel collapses/expands from two equivalent controls: its own
   contrasted heading bar and the matching icon in the side app bar. A

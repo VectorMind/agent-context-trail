@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ConversationListItem, ConversationSummary, ProviderId } from './domain/types';
 import { findLatestClaudeSession } from './providers/claude/discover';
 import { parseClaudeSession } from './providers/claude/parser';
-import { getCodexSessionFilePath, listCodexConversations } from './providers/codex/discover';
+import { getCodexSessionFilePath, getLatestCodexRateLimits, listCodexConversations } from './providers/codex/discover';
 import { parseCodexSession } from './providers/codex/parser';
 import { getCopilotSessionFilePath, listCopilotConversations } from './providers/copilot/discover';
 import { parseCopilotSession } from './providers/copilot/parser';
@@ -66,7 +66,7 @@ async function loadLatestSummary(workspacePath: string): Promise<ConversationSum
     candidates.push({
       provider: 'codex',
       lastAt: codexItems[0].lastAt,
-      load: () => listAndLoadCodexSummary(codexItems)
+      load: () => listAndLoadCodexSummary(workspacePath, codexItems)
     });
   }
   if (copilotItems[0]) {
@@ -82,12 +82,23 @@ async function loadLatestSummary(workspacePath: string): Promise<ConversationSum
   return candidates[0].load();
 }
 
-async function listAndLoadCodexSummary(items: ConversationListItem[]): Promise<ConversationSummary | undefined> {
+async function listAndLoadCodexSummary(workspacePath: string, items: ConversationListItem[]): Promise<ConversationSummary | undefined> {
   const latest = items[0];
   if (!latest) return undefined;
   const filePath = getCodexSessionFilePath(latest.id);
   if (!filePath) return undefined;
-  return parseCodexSession(filePath, latest.id, undefined, pricing);
+  const summary = await parseCodexSession(filePath, latest.id, undefined, pricing);
+  const latestRateLimits = await getLatestCodexRateLimits(workspacePath, pricing);
+  return {
+    ...summary,
+    currentStatus:
+      summary.currentStatus || latestRateLimits
+        ? {
+            ...summary.currentStatus,
+            rateLimits: latestRateLimits ?? summary.currentStatus?.rateLimits
+          }
+        : undefined
+  };
 }
 
 async function listAndLoadCopilotSummary(
