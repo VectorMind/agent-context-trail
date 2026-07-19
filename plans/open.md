@@ -2,4 +2,4 @@
 
 | Packet | Status | Description |
 | --- | --- | --- |
-| _none_ | — | `plans/2026-07/07/call-details` completed and moved to `plans/closed.md` the same day. |
+| `plans/2026-07/19/prompt-cost-map` | Planned | Option A and all design decisions accepted; narrow specification amendment pending for workspace/provider period mode. |
