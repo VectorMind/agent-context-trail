@@ -521,6 +521,7 @@ export class PanelController implements vscode.Disposable {
     overflow: hidden;
     margin-bottom: 10px;
     background: var(--vscode-editor-background);
+    scroll-margin-top: 8px;
   }
   .section-head {
     display: flex;
