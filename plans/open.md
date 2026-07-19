@@ -2,4 +2,4 @@
 
 | Packet | Status | Description |
 | --- | --- | --- |
-| `plans/2026-07/19/prompt-cost-map` | Planned | Option A and all design decisions accepted; narrow specification amendment pending for workspace/provider period mode. |
+| `plans/2026-07/19/prompt-cost-map` | Implemented | SR-001 applied; panel, period mode, host projection, chart, 22 unit tests, real-data probe done (typecheck/build/test clean); rendered in-VS Code visual pass pending. |

@@ -61,6 +61,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/run-tests.js",
     "package": "node esbuild.js --production && vsce package --no-dependencies -o agent-context-trail.vsix",
     "install:local": "code --install-extension agent-context-trail.vsix --force",
     "reinstall": "npm run package && npm run install:local"

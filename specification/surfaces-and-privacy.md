@@ -80,6 +80,19 @@ order:
   time-to-first-token, and provider-specific request metadata such as model
   path or context-window facts when the provider exposes them. Fields that a
   provider cannot expose remain unavailable rather than being shown as zero.
+- **Prompt cost map** - a collapsible panel after the request's call-level
+  drill-down surfaces and before the storage footer: one scatter mark per
+  request, encoding context tokens at the request's first LLM call (x),
+  context tokens at its last LLM call (y), USD cost (mark area), and LLM-call
+  count (mark color with a labeled gradient legend). It carries a two-state
+  scope toggle: **Selected conversation** (default; the current conversation's
+  requests) and **Selected period** (requests of the current workspace and
+  currently selected provider whose start time falls inside an All time /
+  rolling day / week / month filter — the narrow exception defined in
+  `product-scope.md`). Requests whose endpoints or cost are unavailable are
+  reported as explicit exclusion counts with reasons, never plotted as
+  zero-valued marks. Activating a mark selects that request (and, in period
+  mode, its conversation first) through the normal in-place selection path.
 
 Panel interaction rules:
 
@@ -102,7 +115,12 @@ Panel interaction rules:
   persists across panel reloads.
 - No level of aggregation above one conversation is computed or displayed
   (see `product-scope.md`): the overview chart and table show per-conversation
-  rows only, never cross-conversation totals.
+  rows only, never cross-conversation totals. The one narrow exception is the
+  Prompt cost map's Selected period mode, bounded exactly as defined in
+  `product-scope.md`: request-level points across the current workspace and
+  selected provider, filtered by a rolling window, with no persisted or
+  displayed period totals beyond the visible points' plain sum and count in
+  that panel's own heading.
 
 The panel is the only place full token counts, tool-call counts, and per-request
 detail are shown. The status bar may surface only the limited passive

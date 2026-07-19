@@ -1,12 +1,14 @@
 import {
   categoryColorMap,
   COST_COLOR,
+  CostMapSelection,
   formatDurationMs,
   formatTokens,
   formatTokensCompact,
   gapBeforeMs,
   llmCallSpanMs,
   renderChart,
+  renderCostMapChart,
   renderOverviewChart,
   renderPromptTimeline,
   shortModelName,
@@ -16,7 +18,8 @@ import {
   TOKEN_SERIES,
   tokenTotal
 } from './chart';
-import { ConversationDetailPayload, HostToWebviewMessage, WebviewToHostMessage } from '../panel/protocol';
+import { CostMapExclusions, CostMapPoint, deriveCostMapPoints, emptyExclusions } from '../domain/costMap';
+import { ConversationDetailPayload, CostMapPeriodPayload, HostToWebviewMessage, WebviewToHostMessage } from '../panel/protocol';
 import {
   ConversationListItem,
   CurrentStatusSnapshot,
@@ -56,8 +59,10 @@ type LayoutId = 'A' | 'B' | 'C' | 'D';
 const DEFAULT_LAYOUT: LayoutId = 'D';
 type SortKey = 'title' | 'firstAt' | 'lastAt' | 'durationMs' | 'requestCount' | 'totalTokens' | 'totalCostUsd';
 type SortDir = 'asc' | 'desc';
-type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline' | 'callDetail';
+type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline' | 'callDetail' | 'costMap';
 type TableTimeFilter = 'all' | 'day' | 'week' | 'month';
+/** Prompt cost map scope toggle (plans/2026-07/19/prompt-cost-map OP-001). */
+type CostMapScope = 'conversation' | 'period';
 /** Tools table (Layout D request card): '#' is call order, not a sortable metric. */
 type ToolSortKey = 'order' | 'name' | 'target' | 'in' | 'out' | 'time';
 
@@ -73,7 +78,8 @@ const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] =
   { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
   { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' },
   { id: 'toolTimeline', title: 'Prompt timeline', icon: '▥', hint: 'LLM and tool calls of the selected prompt, in sequence' },
-  { id: 'callDetail', title: 'Call detail', icon: '⌖', hint: 'Bounded detail for the selected LLM or tool call' }
+  { id: 'callDetail', title: 'Call detail', icon: '⌖', hint: 'Bounded detail for the selected LLM or tool call' },
+  { id: 'costMap', title: 'Prompt cost map', icon: '⊛', hint: 'Start vs end context, cost, and LLM iterations for every prompt in scope' }
 ];
 
 const TABLE_PAGE_SIZE = 100;
@@ -87,6 +93,8 @@ const TABLE_TIME_FILTERS: { key: TableTimeFilter; label: string; days?: number }
 interface PersistedState {
   layout?: LayoutId;
   sectionsCollapsed?: Partial<Record<SectionId, boolean>>;
+  costMapScope?: CostMapScope;
+  costMapPeriod?: TableTimeFilter;
 }
 
 interface State {
@@ -116,6 +124,12 @@ interface State {
   promptExpanded: boolean;
   /** Call selected in the Prompt timeline / Tools table, driving Call detail. */
   selectedCall?: TimelineSelection;
+  /** Prompt cost map: scope toggle, period filter, and optional model filter (DD-009/DD-020). */
+  costMapScope: CostMapScope;
+  costMapPeriod: TableTimeFilter;
+  costMapModelFilter?: string;
+  /** Period-mode point activation on another conversation: prompt to select once its detail arrives. */
+  pendingPromptSelect?: { conversationId: string; promptIndex: number };
 }
 
 /**
@@ -128,6 +142,14 @@ const toolDetailCache = new Map<string, ToolCallDetail | 'loading'>();
 function toolDetailKey(provider: ProviderId, conversationId: string, toolCallId: string): string {
   return `${provider}/${conversationId}/${toolCallId}`;
 }
+
+/**
+ * Selected-period projections for the Prompt cost map, keyed
+ * `${provider}/${days ?? 'all'}`; 'loading' while the host query is in
+ * flight. A cache, not view state; cleared on every init so period points
+ * track the provider logs.
+ */
+const costMapPeriodCache = new Map<string, CostMapPeriodPayload | 'loading'>();
 
 const persisted = vscodeApi.getState<PersistedState>();
 
@@ -149,13 +171,20 @@ const state: State = {
   sectionsCollapsed: persisted?.sectionsCollapsed ?? {},
   toolsSortKey: 'order',
   toolsSortDir: 'asc',
-  promptExpanded: false
+  promptExpanded: false,
+  costMapScope: persisted?.costMapScope === 'period' ? 'period' : 'conversation',
+  costMapPeriod:
+    persisted?.costMapPeriod && TABLE_TIME_FILTERS.some((f) => f.key === persisted.costMapPeriod)
+      ? persisted.costMapPeriod
+      : 'all'
 };
 
 function persistState(): void {
   vscodeApi.setState({
     layout: state.layout,
-    sectionsCollapsed: state.sectionsCollapsed
+    sectionsCollapsed: state.sectionsCollapsed,
+    costMapScope: state.costMapScope,
+    costMapPeriod: state.costMapPeriod
   } satisfies PersistedState);
 }
 
@@ -2062,6 +2091,268 @@ function renderCallDetailSection(body: HTMLElement): void {
   if (call) renderLlmCallCard(body, request, call, sel.index);
 }
 
+// ---- Prompt cost map section (plans/2026-07/19/prompt-cost-map) ---------------------
+
+const COST_MAP_SCOPES: { key: CostMapScope; label: string; hint: string }[] = [
+  { key: 'conversation', label: 'Selected conversation', hint: 'Every prompt in the selected conversation' },
+  {
+    key: 'period',
+    label: 'Selected period',
+    hint: 'Every prompt of this workspace and provider inside the period filter'
+  }
+];
+
+function costMapPeriodDays(): number | undefined {
+  return TABLE_TIME_FILTERS.find((filter) => filter.key === state.costMapPeriod)?.days;
+}
+
+function costMapPeriodLabel(): string {
+  return TABLE_TIME_FILTERS.find((filter) => filter.key === state.costMapPeriod)?.label ?? 'All time';
+}
+
+function ensureCostMapPeriodData(): CostMapPeriodPayload | 'loading' {
+  const key = `${state.selectedProvider}/${costMapPeriodDays() ?? 'all'}`;
+  const cached = costMapPeriodCache.get(key);
+  if (cached) return cached;
+  costMapPeriodCache.set(key, 'loading');
+  post({ type: 'getCostMapPeriod', provider: state.selectedProvider, days: costMapPeriodDays() });
+  return 'loading';
+}
+
+interface CostMapScopeData {
+  points: CostMapPoint[];
+  totalPrompts: number;
+  excludedPrompts: number;
+  reasons: CostMapExclusions;
+  loading: boolean;
+  /** Set in period scope only; prefixes the collapsed summary. */
+  periodLabel?: string;
+}
+
+/** The cost-map input for the active scope; undefined when nothing is selected yet. */
+function costMapData(): CostMapScopeData | undefined {
+  if (state.costMapScope === 'conversation') {
+    const detail = state.detail;
+    if (!detail) return undefined;
+    const derived = deriveCostMapPoints(detail.requests, { id: detail.id, title: detail.title });
+    return { ...derived, loading: false };
+  }
+  const label = costMapPeriodLabel();
+  const data = ensureCostMapPeriodData();
+  if (data === 'loading') {
+    return { points: [], totalPrompts: 0, excludedPrompts: 0, reasons: emptyExclusions(), loading: true, periodLabel: label };
+  }
+  return {
+    points: data.points,
+    totalPrompts: data.totalPrompts,
+    excludedPrompts: data.excludedPrompts,
+    reasons: data.reasons,
+    loading: false,
+    periodLabel: label
+  };
+}
+
+function costMapSummary(): string {
+  const data = costMapData();
+  if (!data) return 'none selected';
+  const prefix = data.periodLabel ? `${data.periodLabel} · ` : '';
+  if (data.loading) return `${prefix}loading…`;
+  const parts = [`${data.totalPrompts} prompt${data.totalPrompts === 1 ? '' : 's'}`, `${data.points.length} charted`];
+  if (data.excludedPrompts > 0) parts.push(`${data.excludedPrompts} not charted`);
+  if (data.points.length > 0) {
+    parts.push(`${formatUsd(data.points.reduce((sum, p) => sum + p.costUsd, 0))} total`);
+  }
+  return prefix + parts.join(' · ');
+}
+
+function setCostMapScope(scope: CostMapScope): void {
+  state.costMapScope = scope;
+  state.costMapModelFilter = undefined;
+  persistState();
+  render();
+}
+
+function setCostMapPeriod(key: TableTimeFilter): void {
+  state.costMapPeriod = key;
+  state.costMapModelFilter = undefined;
+  persistState();
+  render();
+}
+
+/**
+ * Point activation (OP-006/DD-020): reuse the existing selection path. A
+ * point of the loaded conversation selects that prompt directly; a
+ * period-mode point of another conversation loads that conversation first
+ * and selects the prompt when its detail arrives. The page never scrolls —
+ * render() restores scroll position.
+ */
+function selectCostMapPoint(point: CostMapPoint): void {
+  const detail = state.detail;
+  if (point.conversationId && point.conversationId !== detail?.id) {
+    state.pendingPromptSelect = { conversationId: point.conversationId, promptIndex: point.promptIndex };
+    state.loadingId = point.conversationId;
+    state.sectionsCollapsed.thread = false;
+    state.sectionsCollapsed.request = false;
+    persistState();
+    post({ type: 'selectConversation', provider: state.selectedProvider, id: point.conversationId });
+    render();
+    return;
+  }
+  selectRequest(point.promptIndex);
+}
+
+function costMapExclusionBits(reasons: CostMapExclusions): string[] {
+  const bits: string[] = [];
+  if (reasons.noLlmCalls > 0) bits.push(`no LLM calls ×${reasons.noLlmCalls}`);
+  if (reasons.missingFirstContext > 0) bits.push(`missing first-call context ×${reasons.missingFirstContext}`);
+  if (reasons.missingLastContext > 0) bits.push(`missing last-call context ×${reasons.missingLastContext}`);
+  if (reasons.costUnavailable > 0) bits.push(`cost unavailable ×${reasons.costUnavailable}`);
+  return bits;
+}
+
+function renderCostMapSection(body: HTMLElement): void {
+  // scope toggle + period filter (period pills only in period mode, DD-020)
+  const toolbar = document.createElement('div');
+  toolbar.className = 'overview-toolbar';
+  const scopePills = document.createElement('div');
+  scopePills.className = 'filter-pills';
+  for (const scope of COST_MAP_SCOPES) {
+    const button = document.createElement('button');
+    button.className = 'filter-pill' + (state.costMapScope === scope.key ? ' active' : '');
+    button.textContent = scope.label;
+    button.title = scope.hint;
+    button.addEventListener('click', () => setCostMapScope(scope.key));
+    scopePills.appendChild(button);
+  }
+  toolbar.appendChild(scopePills);
+  if (state.costMapScope === 'period') {
+    const periodPills = document.createElement('div');
+    periodPills.className = 'filter-pills';
+    for (const filter of TABLE_TIME_FILTERS) {
+      const button = document.createElement('button');
+      button.className = 'filter-pill' + (state.costMapPeriod === filter.key ? ' active' : '');
+      button.textContent = filter.label;
+      button.title = `Prompts whose start time falls in: ${filter.label.toLowerCase()}`;
+      button.addEventListener('click', () => setCostMapPeriod(filter.key));
+      periodPills.appendChild(button);
+    }
+    toolbar.appendChild(periodPills);
+  }
+  body.appendChild(toolbar);
+
+  const data = costMapData();
+  if (!data) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Select a conversation to map its prompts.';
+    body.appendChild(empty);
+    return;
+  }
+  if (data.loading) {
+    const loading = document.createElement('div');
+    loading.className = 'empty';
+    loading.textContent = 'Scanning workspace conversations for this period…';
+    body.appendChild(loading);
+    return;
+  }
+  if (data.totalPrompts === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent =
+      state.costMapScope === 'period'
+        ? `No ${PROVIDER_LABELS[state.selectedProvider]} prompts in this workspace for ${costMapPeriodLabel().toLowerCase()}.`
+        : 'No prompts in this conversation yet.';
+    body.appendChild(empty);
+    return;
+  }
+
+  // honest coverage line (DD-010): counts + reasons, never zero-fabrication
+  const status = document.createElement('div');
+  status.className = 'costmap-status';
+  const reasonBits = costMapExclusionBits(data.reasons);
+  status.textContent =
+    `${data.points.length} of ${data.totalPrompts} prompt${data.totalPrompts === 1 ? '' : 's'} charted` +
+    (reasonBits.length > 0 ? ` — not charted: ${reasonBits.join(', ')}` : '');
+  body.appendChild(status);
+
+  if (data.points.length === 0) {
+    // explicit unavailable state (DD-011), e.g. Copilot's missing per-call context
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent =
+      `No prompt here exposes the data this map needs — ${PROVIDER_LABELS[state.selectedProvider]} ` +
+      'is missing per-LLM-call context or usable cost for every prompt in scope (reasons above). ' +
+      'Nothing is plotted rather than showing made-up zeros.';
+    body.appendChild(empty);
+    return;
+  }
+
+  // compact model filter when several priced models are visible (DD-009)
+  const modelKeys: string[] = [];
+  for (const point of data.points) {
+    const key = point.model ?? 'unknown';
+    if (!modelKeys.includes(key)) modelKeys.push(key);
+  }
+  const activeModelFilter =
+    state.costMapModelFilter && modelKeys.includes(state.costMapModelFilter) ? state.costMapModelFilter : undefined;
+  if (modelKeys.length > 1) {
+    const modelPills = document.createElement('div');
+    modelPills.className = 'filter-pills costmap-models';
+    const allButton = document.createElement('button');
+    allButton.className = 'filter-pill' + (activeModelFilter === undefined ? ' active' : '');
+    allButton.textContent = 'All models';
+    allButton.addEventListener('click', () => {
+      state.costMapModelFilter = undefined;
+      render();
+    });
+    modelPills.appendChild(allButton);
+    for (const key of modelKeys) {
+      const button = document.createElement('button');
+      button.className = 'filter-pill' + (activeModelFilter === key ? ' active' : '');
+      button.textContent = key === 'unknown' ? 'unknown model' : shortModelName(key);
+      button.title = key === 'unknown' ? 'Prompts with no recorded model' : key;
+      button.addEventListener('click', () => {
+        state.costMapModelFilter = key;
+        render();
+      });
+      modelPills.appendChild(button);
+    }
+    body.appendChild(modelPills);
+  }
+  const points =
+    activeModelFilter === undefined ? data.points : data.points.filter((p) => (p.model ?? 'unknown') === activeModelFilter);
+
+  if (points.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No charted prompt matches the model filter.';
+    body.appendChild(empty);
+    return;
+  }
+
+  const selected: CostMapSelection | undefined =
+    state.detail && state.selectedRequestIndex !== undefined
+      ? { conversationId: state.detail.id, promptIndex: state.selectedRequestIndex }
+      : undefined;
+  const chartHost = document.createElement('div');
+  chartHost.className = 'chart-host';
+  body.appendChild(chartHost);
+  renderCostMapChart(chartHost, {
+    points,
+    selected,
+    onSelect: selectCostMapPoint,
+    showConversation: state.costMapScope === 'period'
+  });
+
+  // explanatory framing, not causal (DD-017)
+  const hint = document.createElement('div');
+  hint.className = 'chart-hint';
+  hint.textContent =
+    'Prompts on the same diagonal grew their context by the same amount; up-right on a diagonal means the same growth from a larger start. ' +
+    'An explanatory comparison, not a causal model — model rates, cache pricing, and output tokens also shape cost.';
+  body.appendChild(hint);
+}
+
 // ---- conversations table ------------------------------------------------------------
 
 const TABLE_COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
@@ -2202,6 +2493,9 @@ function sectionSummary(id: SectionId, items: ConversationListItem[]): string {
     parts.push(`${toolCount} tool call${toolCount === 1 ? '' : 's'}`);
     const hasTime = (request.tools ?? []).some((t) => t.durationMs !== undefined);
     return parts.join(' · ') + (hasTime || toolCount === 0 ? '' : ' · time unavailable');
+  }
+  if (id === 'costMap') {
+    return costMapSummary();
   }
   if (id === 'callDetail') {
     const request = selectedRequest();
@@ -2356,6 +2650,11 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
 
   if (id === 'callDetail') {
     renderCallDetailSection(body);
+    return;
+  }
+
+  if (id === 'costMap') {
+    renderCostMapSection(body);
     return;
   }
 
@@ -2556,16 +2855,36 @@ function render(): void {
   if (timelineScroll) timelineScroll.scrollLeft = previousTimelineScrollLeft;
 }
 
+/** Period-mode activation: jump to the pending prompt once its conversation's detail is in. */
+function applyPendingPromptSelect(detail: ConversationDetailPayload): void {
+  const pending = state.pendingPromptSelect;
+  if (!pending || detail.id !== pending.conversationId) return;
+  state.pendingPromptSelect = undefined;
+  if (detail.requests.length === 0) return;
+  state.selectedRequestIndex = Math.min(pending.promptIndex, detail.requests.length - 1);
+  state.selectedCall = undefined;
+  state.promptExpanded = false;
+  state.sectionsCollapsed.request = false;
+  state.sectionsCollapsed.toolTimeline = false;
+  persistState();
+}
+
 window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) => {
   const message = event.data;
   if (message.type === 'init') {
     state.providers = message.providers;
     state.workspacePath = message.workspacePath;
     state.conversationsByProvider = message.conversationsByProvider;
+    costMapPeriodCache.clear();
     applyDetail(message.selected, true);
+    if (message.selected) applyPendingPromptSelect(message.selected);
     render();
   } else if (message.type === 'conversationDetail') {
     applyDetail(message.detail, true);
+    applyPendingPromptSelect(message.detail);
+    render();
+  } else if (message.type === 'costMapPeriod') {
+    costMapPeriodCache.set(`${message.payload.provider}/${message.payload.days ?? 'all'}`, message.payload);
     render();
   } else if (message.type === 'toolCallDetail') {
     const provider = state.detail?.provider ?? state.selectedProvider;

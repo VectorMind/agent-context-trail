@@ -22,7 +22,8 @@ general usage-analytics dashboard.
 ## Data Scope
 
 The extension reasons about exactly three logical surfaces of data. No level
-above conversation is ever computed, stored, or displayed.
+above conversation is ever computed, stored, or displayed, with the single
+narrow exception defined below for the Prompt Cost Map period view.
 
 - **Current Status**: live status facts that affect reading the current agent
   state, but are not conversation aggregation. This includes provider-global
@@ -42,6 +43,23 @@ Binding rules:
   status, but it must not compute summaries across conversations.
 - A conversation's totals are always the sum of its own requests, never an
   independently reported or externally aggregated figure.
+
+### Narrow exception: Prompt Cost Map period view
+
+The panel's Prompt Cost Map may compare request-level points across
+conversations, only within the current workspace and the currently selected
+provider. That comparison may be filtered by All time or a rolling day, week,
+or month window over each request's own start timestamp.
+
+Bounds of the exception:
+
+- The period is a view filter over local request-level points. No day, week,
+  or month totals, trend series, budgets, grades, or cross-workspace /
+  cross-provider summaries are computed, stored, or displayed.
+- The only aggregate the view may show is the plain sum and count of the
+  currently visible request points in its own heading.
+- The exception applies to the Prompt Cost Map only. Conversation totals and
+  every other surface keep the conversation-level rules above.
 
 ## Non-Goals
 
