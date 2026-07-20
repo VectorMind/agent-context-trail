@@ -9,17 +9,17 @@ const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const outDir = path.join(root, '.tmp', 'tests');
 
-function findTests(dir) {
+function findFilesEndingWith(dir, suffix) {
   const found = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) found.push(...findTests(fullPath));
-    else if (entry.isFile() && entry.name.endsWith('.test.ts')) found.push(fullPath);
+    if (entry.isDirectory()) found.push(...findFilesEndingWith(fullPath, suffix));
+    else if (entry.isFile() && entry.name.endsWith(suffix)) found.push(fullPath);
   }
   return found;
 }
 
-const entryPoints = findTests(path.join(root, 'src'));
+const entryPoints = findFilesEndingWith(path.join(root, 'src'), '.test.ts');
 if (entryPoints.length === 0) {
   console.error('no *.test.ts files found under src/');
   process.exit(1);
@@ -37,9 +37,6 @@ esbuild.buildSync({
   logLevel: 'warning'
 });
 
-const bundled = fs
-  .readdirSync(outDir)
-  .filter((name) => name.endsWith('.test.js'))
-  .map((name) => path.join(outDir, name));
+const bundled = findFilesEndingWith(outDir, '.test.js');
 const result = spawnSync(process.execPath, ['--test', ...bundled], { stdio: 'inherit' });
 process.exit(result.status ?? 1);

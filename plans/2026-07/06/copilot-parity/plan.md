@@ -47,7 +47,8 @@ taken by this extension.
    missing data.
 5. Resolve `OP-003` and `OP-004` from `plans/2026-07/05/conversation-meta`
    (the Copilot OTel lead, and the `.jsonl` chatSessions variant) - see
-   "External Research" below.
+   "External Research" below. The OTel lead was reopened as its own active
+   packet on 2026-07-20: `plans/2026-07/20/copilot-otel`.
 
 ## External Research
 

@@ -75,11 +75,16 @@ run, no export step.
 - **What's shown**: real prompts, resolved model, input/output tokens, tool
   calls, timings, and an `estimated` USD cost, plus Copilot's own real
   premium-request credit figure (`copilotCredits`) shown alongside the cost
-  estimate as its own signal — never merged with it.
+  estimate as its own signal — never merged with it. When the session log
+  includes model capacity, the latest request's input and context-window size
+  also feed Current Context Status.
 - **What's not shown, and why**: cache-read/cache-write token counts.
   Unlike Claude and Codex, Copilot's local log does not record them at all —
   this is a real gap in the data, not something this extension chose to
-  hide.
+  hide. The Prompt timeline likewise cannot show context for each Copilot LLM
+  call from this zero-configuration source; the log stores only request-level
+  usage. Copilot Chat's opt-in OpenTelemetry exporter can expose per-call token
+  data, but Agent Context Trail does not ingest that export yet.
 - Cost is `estimated`, the same bring-your-own-token convention used for
   Claude and Codex: GitHub does not publish a Copilot token-to-USD rate, so
   this extension estimates against the resolved underlying model's public

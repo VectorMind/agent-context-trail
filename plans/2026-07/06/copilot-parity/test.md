@@ -77,3 +77,19 @@ Remaining gaps:
   `editedFileEvents` payload was found on this machine to verify those two
   fields against; both stay defensively parsed (see `implementation.md`
   "Known Gaps").
+
+## Corrective Verification - 2026-07-20
+
+- Added unit coverage for adaptive USD precision, including positive values
+  from `$0.0042` down below `$0.000001`; no nonzero positive cost renders as
+  `$0.00`.
+- Added unit coverage for Copilot's last-request context projection (used,
+  available, capacity, and fill percentage) and unavailable-value handling.
+- Reviewed current official VS Code documentation for Copilot Chat OTel,
+  content-disabled file export, SQLite trace export, Agent Debug Log export,
+  per-call GenAI token attributes, and enterprise-managed precedence. Findings
+  and remaining empirical proof moved to `plans/2026-07/20/copilot-otel`.
+- `npm.cmd test` - passed, 26/26 tests.
+- `npm.cmd run typecheck` - passed.
+- `npm.cmd run build` - passed.
+- `git diff --check` - passed.

@@ -4,6 +4,20 @@
 data (zero configuration); verified with typecheck, build, and a real local
 Copilot chatSessions parse against this machine's own workspace history.
 
+## 2026-07-20 Corrective Amendment
+
+- Fixed sub-cent USD display globally: nonzero estimates below `$0.01` now use
+  adaptive precision instead of rendering as `$0.00`.
+- Fixed the missing Copilot Current Context Status projection. The parser had
+  already captured request-level `promptTokens` and `maxInputTokens`, but never
+  assigned a `currentStatus` to the returned conversation summary.
+- Kept Copilot Prompt timeline context unavailable because `chatSessions` has
+  no per-LLM-call usage. The supported OTel file-export enrichment path and
+  enterprise-policy constraints moved to the follow-up packet
+  `plans/2026-07/20/copilot-otel`.
+- Made the test runner recurse through esbuild's output tree; adding tests in
+  multiple source folders exposed that it had only scanned the output root.
+
 ## Files Changed
 
 - `src/providers/copilot/discover.ts` - new: finds the current workspace's

@@ -3,6 +3,7 @@ import * as readline from 'readline';
 import {
   addUsage,
   ConversationSummary,
+  CurrentStatusSnapshot,
   EMPTY_USAGE,
   LlmCallInfo,
   PromptRequest,
@@ -123,6 +124,37 @@ interface RawCopilotDocument {
 
 function contextWindowFromDocument(doc: RawCopilotDocument): number | undefined {
   return doc.inputState?.selectedModel?.metadata?.maxInputTokens;
+}
+
+/**
+ * chatSessions persists one request-level input-token value, not the
+ * individual LLM-call values needed by the Prompt timeline. It is still a
+ * valid last-recorded conversation context snapshot and, together with the
+ * selected model capacity, feeds the separate Context Status surface.
+ */
+export function copilotContextStatus(
+  requests: PromptRequest[],
+  workspacePath: string
+): CurrentStatusSnapshot | undefined {
+  const request = requests[requests.length - 1];
+  if (!request) return undefined;
+
+  const usedTokens = request.usage.inputTokens > 0 ? request.usage.inputTokens : undefined;
+  const window = request.modelContextWindow;
+  if (usedTokens === undefined && window === undefined && request.model === undefined) return undefined;
+
+  return {
+    context: {
+      workspacePath,
+      model: request.model,
+      modelContextWindow: window,
+      contextUsedTokens: usedTokens,
+      contextAvailableTokens:
+        usedTokens !== undefined && window !== undefined ? Math.max(window - usedTokens, 0) : undefined,
+      contextFillPercent:
+        usedTokens !== undefined && window !== undefined && window > 0 ? (usedTokens / window) * 100 : undefined
+    }
+  };
 }
 
 async function reconstructDocument(filePath: string): Promise<RawCopilotDocument> {
@@ -354,7 +386,8 @@ export async function parseCopilotSession(
     updatedAt,
     requests,
     totalUsage,
-    totalCost: { usd: totalCostUsd, source: 'estimated' }
+    totalCost: { usd: totalCostUsd, source: 'estimated' },
+    currentStatus: copilotContextStatus(requests, workspacePath)
   };
 }
 
