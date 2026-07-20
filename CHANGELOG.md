@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 - 19.07.2026
+
+- New **Prompt cost map**: an accessible context-growth scatter plot for each
+  prompt, showing first versus final context size, cost by bubble area, and
+  LLM-call iterations by colour.
+- Compare the selected conversation or a rolling day, week, month, or
+  all-time period for the selected provider and workspace; choose a model to
+  narrow multi-model views, then activate any point to inspect its prompt.
+- Honest chartability reporting: prompts without usable LLM-call context are
+  counted with their reason rather than plotted as zeros; Copilot shows an
+  explicit unavailable state where that context is not exposed.
+
 ## 0.1.1 - 09.07.2026
 
 - Conversations table: session duration column, title plus last-activity

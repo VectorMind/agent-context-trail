@@ -11,7 +11,14 @@ import { extractCopilotToolCallDetail, parseCopilotSession } from '../providers/
 import { unavailableDetail } from '../providers/callDetail';
 import { PricingService } from '../pricing/pricingService';
 import { ConversationListItem, ProviderId, ToolCallDetail } from '../domain/types';
-import { ConversationDetailPayload, HostToWebviewMessage, WebviewToHostMessage } from './protocol';
+import {
+  addExclusions,
+  CostMapPoint,
+  deriveCostMapPoints,
+  emptyExclusions,
+  withinRollingWindow
+} from '../domain/costMap';
+import { ConversationDetailPayload, CostMapPeriodPayload, HostToWebviewMessage, WebviewToHostMessage } from './protocol';
 
 const PROVIDERS: ProviderId[] = ['claude', 'codex', 'copilot'];
 
@@ -81,7 +88,65 @@ export class PanelController implements vscode.Disposable {
     if (message.type === 'getToolCallDetail') {
       const detail = await this.loadToolCallDetail(message.provider, message.conversationId, message.toolCallId);
       this.post({ type: 'toolCallDetail', conversationId: message.conversationId, detail });
+      return;
     }
+    if (message.type === 'getCostMapPeriod') {
+      const payload = await this.loadCostMapPeriod(message.provider, message.days);
+      this.post({ type: 'costMapPeriod', payload });
+    }
+  }
+
+  /**
+   * Selected-period projection for the Prompt cost map: every prompt of the
+   * current workspace + one provider whose startedAt falls in the rolling
+   * window, reduced host-side to chart points and exclusion counts. Only the
+   * projection crosses into the webview — never full prompt/call payloads
+   * (product-scope.md narrow exception; plan phase 3).
+   */
+  private async loadCostMapPeriod(provider: ProviderId, days: number | undefined): Promise<CostMapPeriodPayload> {
+    const nowMs = Date.now();
+    const empty: CostMapPeriodPayload = {
+      provider,
+      days,
+      points: [],
+      totalPrompts: 0,
+      excludedPrompts: 0,
+      reasons: emptyExclusions(),
+      conversationCount: 0
+    };
+    const workspacePath = this.workspacePath;
+    if (!workspacePath) return empty;
+
+    let items: ConversationListItem[] = [];
+    try {
+      if (provider === 'claude') items = await listClaudeConversations(workspacePath, this.pricing);
+      else if (provider === 'codex') items = await listCodexConversations(workspacePath, this.pricing);
+      else items = await listCopilotConversations(workspacePath, this.pricing);
+    } catch {
+      return empty;
+    }
+
+    const points: CostMapPoint[] = [];
+    let totalPrompts = 0;
+    let excludedPrompts = 0;
+    let reasons = emptyExclusions();
+    let conversationCount = 0;
+    for (const item of items) {
+      // A conversation whose last activity predates the window cannot contain
+      // in-window prompts; skip the full parse.
+      if (days !== undefined && !withinRollingWindow(item.lastAt, days, nowMs)) continue;
+      const detail = await this.loadDetail(provider, item.id).catch(() => undefined);
+      if (!detail) continue;
+      const requests = detail.requests.filter((request) => withinRollingWindow(request.startedAt, days, nowMs));
+      if (requests.length === 0) continue;
+      conversationCount += 1;
+      const derived = deriveCostMapPoints(requests, { id: detail.id, title: detail.title });
+      totalPrompts += derived.totalPrompts;
+      excludedPrompts += derived.excludedPrompts;
+      reasons = addExclusions(reasons, derived.reasons);
+      points.push(...derived.points);
+    }
+    return { provider, days, points, totalPrompts, excludedPrompts, reasons, conversationCount };
   }
 
   /** Bounded excerpt for one tool call, re-read from the provider log on demand. */
@@ -456,6 +521,7 @@ export class PanelController implements vscode.Disposable {
     overflow: hidden;
     margin-bottom: 10px;
     background: var(--vscode-editor-background);
+    scroll-margin-top: 8px;
   }
   .section-head {
     display: flex;
@@ -664,6 +730,20 @@ export class PanelController implements vscode.Disposable {
   .tooltip-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
 
   .chart-hint { margin-top: 6px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+
+  /* ---- Prompt cost map (plans/2026-07/19/prompt-cost-map) ---- */
+  .costmap-status {
+    margin: 0 0 8px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+  }
+  .costmap-models { margin: 0 0 8px; }
+  .gradient-bar {
+    display: inline-block;
+    width: 90px;
+    height: 10px;
+    border-radius: 5px;
+  }
 
   .detail-card {
     border: 1px solid var(--vscode-panel-border);

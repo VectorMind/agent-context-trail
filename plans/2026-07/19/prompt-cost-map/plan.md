@@ -3,13 +3,14 @@
 ## Status
 
 Design approved by the maintainer on 2026-07-19. Option A and the full decision
-register are accepted. No implementation has started.
+register are accepted. Implemented on 2026-07-19 — see `implementation.md`
+and `test.md`; the rendered in-VS Code visual pass remains open.
 
-One specification-review point remains: the accepted **Selected period** mode
-intentionally introduces workspace-scoped, cross-conversation time filtering,
-while the current durable product contract forbids both. The plan records the
-required narrow contract amendment for maintainer approval before
-implementation.
+SR-001 is resolved: the maintainer instructed implementation of the full plan
+(whose phase 1 is "approve and apply the narrow SR-001 amendment"), and the
+narrow amendment is applied to `specification/product-scope.md`,
+`specification/surfaces-and-privacy.md`, and `specification/ui-design.md`
+exactly as recorded below.
 
 ## Problem Summary
 

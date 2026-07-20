@@ -1,4 +1,12 @@
 import { ConversationListItem, LlmCallInfo, PromptRequest, ToolCallInfo, UsageTokens } from '../domain/types';
+import {
+  CostMapPoint,
+  costBubbleRadius,
+  isoGrowthDeltas,
+  iterationScale,
+  iterationT,
+  overlapOffsets
+} from '../domain/costMap';
 import { formatUsd } from '../shared/format';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -1517,6 +1525,410 @@ export function renderOverviewChart(
     note.textContent = `Showing ${shown.length} of ${items.length} conversations — the table below has all of them.`;
     container.appendChild(note);
   }
+}
+
+// ---- Prompt cost map (plans/2026-07/19/prompt-cost-map, Option A) -----------------
+// Start/end context scatter: x = context tokens at the prompt's first LLM
+// call, y = at its last, bubble AREA = USD cost, bubble color = LLM-call
+// count on a min→max gradient scaled to the visible scope. Hand-built SVG
+// like every sibling chart (DD-018); axes share one token scale (same unit),
+// so this is a deliberate multidimensional scatter, not a dual-axis overlay
+// (ui-design.md).
+
+const CM_WIDTH = 660;
+const CM_M_LEFT = 56;
+const CM_M_RIGHT = 20;
+const CM_CAPTION_Y = 12;
+const CM_PLOT_TOP = 22;
+const CM_PLOT_H = 360;
+const CM_PLOT_BOTTOM = CM_PLOT_TOP + CM_PLOT_H;
+const CM_X_LABEL_Y = CM_PLOT_BOTTOM + 16;
+const CM_X_CAPTION_Y = CM_PLOT_BOTTOM + 32;
+const CM_HEIGHT = CM_X_CAPTION_Y + 8;
+const CM_PLOT_RIGHT = CM_WIDTH - CM_M_RIGHT;
+const CM_PLOT_W = CM_PLOT_RIGHT - CM_M_LEFT;
+
+/** Iteration gradient endpoints, resolved from the live theme at render time. */
+const ITERATIONS_LOW_COLOR = 'var(--vscode-charts-blue)';
+const ITERATIONS_HIGH_COLOR = 'var(--vscode-charts-red)';
+
+function mixRgb(a: [number, number, number], b: [number, number, number], t: number): string {
+  const c = (i: number) => Math.round(a[i] + (b[i] - a[i]) * t);
+  return `rgb(${c(0)}, ${c(1)}, ${c(2)})`;
+}
+
+export interface CostMapSelection {
+  conversationId?: string;
+  promptIndex: number;
+}
+
+export interface CostMapChartArgs {
+  points: CostMapPoint[];
+  selected?: CostMapSelection;
+  onSelect: (point: CostMapPoint) => void;
+  /** Period mode: points span conversations, so tooltips name the conversation. */
+  showConversation?: boolean;
+}
+
+function costMapPointLabel(point: CostMapPoint, overlap: number, showConversation: boolean): string {
+  const delta = `${point.contextDelta >= 0 ? '+' : '−'}${formatTokens(Math.abs(point.contextDelta))}`;
+  return (
+    `Prompt ${point.promptIndex + 1}` +
+    (showConversation && point.conversationTitle ? ` of ${point.conversationTitle}` : '') +
+    `: start context ${formatTokens(point.startContext)} tokens, end ${formatTokens(point.endContext)} tokens, ` +
+    `delta ${delta}, ${point.iterations} LLM call${point.iterations === 1 ? '' : 's'}, ` +
+    `${point.toolCalls} tool call${point.toolCalls === 1 ? '' : 's'}, cost ${formatUsd(point.costUsd)} (${point.costSource})` +
+    (overlap > 1 ? `, overlaps ${overlap - 1} other prompt${overlap === 2 ? '' : 's'} at this position` : '') +
+    '. Activate to select this prompt.'
+  );
+}
+
+function fillCostMapTooltip(tooltip: HTMLElement, point: CostMapPoint, overlap: number, color: string, showConversation: boolean): void {
+  tooltip.textContent = '';
+  const header = document.createElement('div');
+  header.className = 'tooltip-header';
+  header.textContent = `Prompt #${point.promptIndex + 1}`;
+  const models = point.modelsUsed?.length ? point.modelsUsed : point.model ? [point.model] : [];
+  if (models.length > 0) {
+    const model = document.createElement('span');
+    model.className = 'tooltip-model';
+    model.textContent = models.map(shortModelName).join(' → ');
+    header.appendChild(model);
+  }
+  tooltip.appendChild(header);
+  if (showConversation && point.conversationTitle) {
+    tooltip.appendChild(tooltipRow(undefined, false, 'Conversation', point.conversationTitle));
+  }
+
+  tooltip.appendChild(tooltipRow(undefined, false, 'Start context', `${formatTokens(point.startContext)} tok`));
+  tooltip.appendChild(tooltipRow(undefined, false, 'End context', `${formatTokens(point.endContext)} tok`));
+  tooltip.appendChild(
+    tooltipRow(
+      undefined,
+      false,
+      'Context delta',
+      `${point.contextDelta >= 0 ? '+' : '−'}${formatTokens(Math.abs(point.contextDelta))} tok`
+    )
+  );
+  tooltip.appendChild(tooltipRow(color, false, 'LLM calls', String(point.iterations)));
+  tooltip.appendChild(tooltipRow(TOOL_CALLS_COLOR, false, 'Tool calls', String(point.toolCalls)));
+  tooltip.appendChild(
+    tooltipRow(undefined, false, 'Context work', `${formatTokens(point.contextWork)} tok`)
+  );
+  tooltip.appendChild(tooltipRow(COST_COLOR, false, `Cost (${point.costSource})`, formatUsd(point.costUsd)));
+  for (const series of TOKEN_SERIES) {
+    const value = point.usage[series.key];
+    if (value > 0) tooltip.appendChild(tooltipRow(series.color, false, series.label, formatTokens(value)));
+  }
+  if (overlap > 1) {
+    tooltip.appendChild(tooltipRow(undefined, false, 'Overlap', `${overlap} prompts at this position`));
+  }
+}
+
+/**
+ * Legend for the cost map: example bubble sizes (area = cost) and the
+ * iteration gradient with labeled min/max endpoints — or a single-value
+ * swatch when every visible prompt has the same count, rather than a false
+ * range (OP-004). Identity is never color-alone: exact counts stay in
+ * tooltips, focus text, and aria labels.
+ */
+function costMapLegend(
+  maxCost: number,
+  scale: { min: number; max: number; single: boolean },
+  lowRgb: [number, number, number],
+  highRgb: [number, number, number]
+): HTMLElement {
+  const legend = document.createElement('div');
+  legend.className = 'chart-legend';
+
+  const sizeItem = document.createElement('span');
+  sizeItem.className = 'legend-item';
+  const rSmall = costBubbleRadius(maxCost / 4, maxCost);
+  const rLarge = costBubbleRadius(maxCost, maxCost);
+  const svg = svgEl('svg', { width: rLarge * 2 + rSmall * 2 + 8, height: rLarge * 2 + 2, role: 'presentation' });
+  const midColor = mixRgb(lowRgb, highRgb, 0.5);
+  svg.appendChild(svgEl('circle', { cx: rSmall + 1, cy: rLarge + 1, r: rSmall, fill: midColor, 'fill-opacity': 0.6, stroke: SURFACE }));
+  svg.appendChild(
+    svgEl('circle', { cx: rSmall * 2 + rLarge + 5, cy: rLarge + 1, r: rLarge, fill: midColor, 'fill-opacity': 0.6, stroke: SURFACE })
+  );
+  sizeItem.appendChild(svg);
+  const sizeLabel = document.createElement('span');
+  sizeLabel.textContent = `area = cost (${formatUsd(maxCost / 4)} → ${formatUsd(maxCost)})`;
+  sizeItem.appendChild(sizeLabel);
+  legend.appendChild(sizeItem);
+
+  const iterItem = document.createElement('span');
+  iterItem.className = 'legend-item';
+  if (scale.single) {
+    const key = document.createElement('span');
+    key.className = 'legend-swatch';
+    key.style.background = mixRgb(lowRgb, highRgb, 0.5);
+    iterItem.appendChild(key);
+    const label = document.createElement('span');
+    label.textContent = `${scale.min} LLM call${scale.min === 1 ? '' : 's'} (all prompts)`;
+    iterItem.appendChild(label);
+  } else {
+    const low = document.createElement('span');
+    low.textContent = String(scale.min);
+    const bar = document.createElement('span');
+    bar.className = 'gradient-bar';
+    bar.style.background = `linear-gradient(90deg, ${mixRgb(lowRgb, highRgb, 0)}, ${mixRgb(lowRgb, highRgb, 1)})`;
+    const high = document.createElement('span');
+    high.textContent = `${scale.max} LLM calls`;
+    iterItem.append(low, bar, high);
+  }
+  legend.appendChild(iterItem);
+
+  const selItem = document.createElement('span');
+  selItem.className = 'legend-item';
+  const ring = document.createElement('span');
+  ring.className = 'legend-swatch';
+  ring.style.background = 'transparent';
+  ring.style.border = '2px solid var(--vscode-focusBorder)';
+  ring.style.borderRadius = '50%';
+  selItem.appendChild(ring);
+  const selLabel = document.createElement('span');
+  selLabel.textContent = 'selected prompt';
+  selItem.appendChild(selLabel);
+  legend.appendChild(selItem);
+
+  return legend;
+}
+
+export function renderCostMapChart(container: HTMLElement, args: CostMapChartArgs): void {
+  const { points, selected, onSelect } = args;
+  const showConversation = !!args.showConversation;
+  if (points.length === 0) return;
+
+  const scale = iterationScale(points.map((p) => p.iterations));
+  const lowRgb = resolveRgb(ITERATIONS_LOW_COLOR) ?? [86, 156, 214];
+  const highRgb = resolveRgb(ITERATIONS_HIGH_COLOR) ?? [209, 105, 105];
+  const colorFor = (point: CostMapPoint): string => mixRgb(lowRgb, highRgb, iterationT(point.iterations, scale));
+
+  const maxCost = Math.max(...points.map((p) => p.costUsd));
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'chart-wrapper';
+  wrapper.appendChild(costMapLegend(maxCost, scale, lowRgb, highRgb));
+
+  const scroll = document.createElement('div');
+  scroll.className = 'chart-scroll';
+  wrapper.appendChild(scroll);
+
+  const tooltip = document.createElement('div');
+  tooltip.className = 'chart-tooltip';
+  tooltip.style.display = 'none';
+  wrapper.appendChild(tooltip);
+
+  // Both axes carry the same unit (context tokens), so they share one scale:
+  // 0 → the nice ceiling of the largest start/end value on screen. The
+  // end = start diagonal is then geometrically honest.
+  const maxToken = Math.max(1, ...points.map((p) => Math.max(p.startContext, p.endContext)));
+  const step = niceStep(maxToken / 4);
+  const tickCount = Math.ceil(maxToken / step);
+  const scaleMax = tickCount * step;
+  const xFor = (tokens: number): number => CM_M_LEFT + (tokens / scaleMax) * CM_PLOT_W;
+  const yFor = (tokens: number): number => CM_PLOT_BOTTOM - (tokens / scaleMax) * CM_PLOT_H;
+
+  const svg = svgEl('svg', {
+    width: CM_WIDTH,
+    height: CM_HEIGHT,
+    viewBox: `0 0 ${CM_WIDTH} ${CM_HEIGHT}`,
+    role: 'img',
+    'aria-label':
+      'Prompt cost map: context tokens at each prompt’s first LLM call (x) versus its last (y); ' +
+      'bubble area is USD cost, bubble color is LLM-call count. Prompts on one diagonal grew their context by the same amount.'
+  });
+  scroll.appendChild(svg);
+
+  const captionY = svgEl('text', { x: CM_M_LEFT, y: CM_CAPTION_Y, class: 'chart-caption', fill: TEXT_MUTED });
+  captionY.textContent = 'END CONTEXT (tokens)';
+  svg.appendChild(captionY);
+  const captionX = svgEl('text', { x: CM_PLOT_RIGHT, y: CM_X_CAPTION_Y, 'text-anchor': 'end', class: 'chart-caption', fill: TEXT_MUTED });
+  captionX.textContent = 'START CONTEXT (tokens)';
+  svg.appendChild(captionX);
+
+  // gridlines + ticks on both axes (compact labels; exact values live in tooltips)
+  for (let t = 0; t <= tickCount; t++) {
+    const value = t * step;
+    const y = yFor(value);
+    svg.appendChild(svgEl('line', { x1: CM_M_LEFT, y1: y, x2: CM_PLOT_RIGHT, y2: y, stroke: GRID, 'stroke-width': 1 }));
+    const yTick = svgEl('text', { x: CM_M_LEFT - 8, y: y + 3, 'text-anchor': 'end', class: 'chart-tick', fill: TEXT_MUTED });
+    yTick.textContent = formatTokensCompact(value);
+    svg.appendChild(yTick);
+    const x = xFor(value);
+    svg.appendChild(svgEl('line', { x1: x, y1: CM_PLOT_TOP, x2: x, y2: CM_PLOT_BOTTOM, stroke: GRID, 'stroke-width': 1 }));
+    if (t > 0) {
+      const xTick = svgEl('text', { x, y: CM_X_LABEL_Y, 'text-anchor': 'middle', class: 'chart-tick', fill: TEXT_MUTED });
+      xTick.textContent = formatTokensCompact(value);
+      svg.appendChild(xTick);
+    }
+  }
+
+  // ---- equal-growth guides (DD-005): end = start plus nice positive parallels ----
+  const guideLayer = svgEl('g', { style: 'pointer-events:none' });
+  guideLayer.appendChild(
+    svgEl('line', {
+      x1: xFor(0),
+      y1: yFor(0),
+      x2: xFor(scaleMax),
+      y2: yFor(scaleMax),
+      stroke: TEXT_MUTED,
+      'stroke-width': 1,
+      'stroke-dasharray': '5 3'
+    })
+  );
+  const diagLabel = svgEl('text', {
+    x: xFor(scaleMax * 0.94),
+    y: yFor(scaleMax * 0.94) + 12,
+    'text-anchor': 'end',
+    class: 'chart-tick',
+    fill: TEXT_MUTED
+  });
+  diagLabel.textContent = 'end = start';
+  guideLayer.appendChild(diagLabel);
+  for (const delta of isoGrowthDeltas(points)) {
+    if (delta >= scaleMax) continue;
+    guideLayer.appendChild(
+      svgEl('line', {
+        x1: xFor(0),
+        y1: yFor(delta),
+        x2: xFor(scaleMax - delta),
+        y2: yFor(scaleMax),
+        stroke: GRID,
+        'stroke-width': 1,
+        'stroke-dasharray': '2 4'
+      })
+    );
+    const label = svgEl('text', {
+      x: xFor(0) + 4,
+      y: yFor(delta) - 4,
+      class: 'chart-tick',
+      fill: TEXT_MUTED
+    });
+    label.textContent = `+${formatTokensCompact(delta)}`;
+    guideLayer.appendChild(label);
+  }
+  svg.appendChild(guideLayer);
+
+  // ---- bubbles ----
+  const positions = points.map((p) => ({ x: xFor(p.startContext), y: yFor(p.endContext) }));
+  const offsets = overlapOffsets(positions);
+  const placed = points.map((point, i) => ({
+    point,
+    i,
+    cx: positions[i].x + offsets[i].dx,
+    cy: positions[i].y + offsets[i].dy,
+    r: costBubbleRadius(point.costUsd, maxCost),
+    overlap: offsets[i].overlap
+  }));
+
+  // fills big-first so small bubbles stay visible; hit targets are separate
+  const bubbleLayer = svgEl('g', { style: 'pointer-events:none' });
+  for (const b of [...placed].sort((a, z) => z.r - a.r)) {
+    bubbleLayer.appendChild(
+      svgEl('circle', {
+        cx: b.cx,
+        cy: b.cy,
+        r: b.r,
+        fill: colorFor(b.point),
+        'fill-opacity': 0.7,
+        stroke: SURFACE,
+        'stroke-width': 1
+      })
+    );
+  }
+  // overlap count next to each cluster (DD-013), drawn once per position
+  const labeledClusters = new Set<string>();
+  for (const b of placed) {
+    if (b.overlap < 2) continue;
+    const key = `${Math.round(positions[b.i].x)}|${Math.round(positions[b.i].y)}`;
+    if (labeledClusters.has(key)) continue;
+    labeledClusters.add(key);
+    const label = svgEl('text', {
+      x: positions[b.i].x + b.r + 8,
+      y: positions[b.i].y - b.r - 2,
+      class: 'chart-tick',
+      fill: TEXT
+    });
+    label.textContent = `×${b.overlap}`;
+    bubbleLayer.appendChild(label);
+  }
+  svg.appendChild(bubbleLayer);
+
+  // selection ring: existing outline language, never color-alone (DD-014)
+  const selectedPlaced = selected
+    ? placed.find(
+        (b) => b.point.promptIndex === selected.promptIndex && b.point.conversationId === selected.conversationId
+      )
+    : undefined;
+  if (selectedPlaced) {
+    svg.appendChild(
+      svgEl('circle', {
+        cx: selectedPlaced.cx,
+        cy: selectedPlaced.cy,
+        r: selectedPlaced.r + 3,
+        fill: 'none',
+        stroke: 'var(--vscode-focusBorder)',
+        'stroke-width': 2,
+        style: 'pointer-events:none'
+      })
+    );
+  }
+
+  // ---- tooltip plumbing ----
+  const positionTooltip = (clientX: number, clientY: number): void => {
+    tooltip.style.display = 'block';
+    const rect = wrapper.getBoundingClientRect();
+    let x = clientX - rect.left + 14;
+    let y = clientY - rect.top - 10;
+    if (x + tooltip.offsetWidth > rect.width - 4) x = clientX - rect.left - tooltip.offsetWidth - 14;
+    if (x < 4) x = 4;
+    if (y + tooltip.offsetHeight > rect.height - 4) y = rect.height - tooltip.offsetHeight - 4;
+    if (y < 4) y = 4;
+    tooltip.style.left = `${x}px`;
+    tooltip.style.top = `${y}px`;
+  };
+  const hideTooltip = (): void => {
+    tooltip.style.display = 'none';
+  };
+
+  // ---- one focusable hit target per prompt, in prompt order (DD-013) ----
+  for (const b of placed) {
+    const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'button' });
+    group.setAttribute('aria-label', costMapPointLabel(b.point, b.overlap, showConversation));
+    const hit = svgEl('circle', {
+      class: 'hit',
+      cx: b.cx,
+      cy: b.cy,
+      r: Math.max(b.r + 2, 9),
+      fill: 'transparent'
+    });
+    group.appendChild(hit);
+
+    const select = (): void => onSelect(b.point);
+    group.addEventListener('click', select);
+    group.addEventListener('keydown', (ev: KeyboardEvent) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        select();
+      }
+    });
+    group.addEventListener('pointermove', (ev: PointerEvent) => {
+      fillCostMapTooltip(tooltip, b.point, b.overlap, colorFor(b.point), showConversation);
+      positionTooltip(ev.clientX, ev.clientY);
+    });
+    group.addEventListener('pointerleave', hideTooltip);
+    group.addEventListener('focus', () => {
+      fillCostMapTooltip(tooltip, b.point, b.overlap, colorFor(b.point), showConversation);
+      const hitRect = hit.getBoundingClientRect();
+      positionTooltip(hitRect.right, hitRect.top + 10);
+    });
+    group.addEventListener('blur', hideTooltip);
+    svg.appendChild(group);
+  }
+
+  container.appendChild(wrapper);
 }
 
 function tooltipRow(keyColor: string | undefined, isLine: boolean, label: string, value: string): HTMLElement {

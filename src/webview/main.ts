@@ -1,12 +1,14 @@
 import {
   categoryColorMap,
   COST_COLOR,
+  CostMapSelection,
   formatDurationMs,
   formatTokens,
   formatTokensCompact,
   gapBeforeMs,
   llmCallSpanMs,
   renderChart,
+  renderCostMapChart,
   renderOverviewChart,
   renderPromptTimeline,
   shortModelName,
@@ -16,7 +18,8 @@ import {
   TOKEN_SERIES,
   tokenTotal
 } from './chart';
-import { ConversationDetailPayload, HostToWebviewMessage, WebviewToHostMessage } from '../panel/protocol';
+import { CostMapExclusions, CostMapPoint, deriveCostMapPoints, emptyExclusions } from '../domain/costMap';
+import { ConversationDetailPayload, CostMapPeriodPayload, HostToWebviewMessage, WebviewToHostMessage } from '../panel/protocol';
 import {
   ConversationListItem,
   CurrentStatusSnapshot,
@@ -56,8 +59,10 @@ type LayoutId = 'A' | 'B' | 'C' | 'D';
 const DEFAULT_LAYOUT: LayoutId = 'D';
 type SortKey = 'title' | 'firstAt' | 'lastAt' | 'durationMs' | 'requestCount' | 'totalTokens' | 'totalCostUsd';
 type SortDir = 'asc' | 'desc';
-type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline' | 'callDetail';
+type SectionId = 'chart' | 'table' | 'limits' | 'context' | 'thread' | 'request' | 'toolTimeline' | 'tools' | 'callDetail' | 'costMap';
 type TableTimeFilter = 'all' | 'day' | 'week' | 'month';
+/** Prompt cost map scope toggle (plans/2026-07/19/prompt-cost-map OP-001). */
+type CostMapScope = 'conversation' | 'period';
 /** Tools table (Layout D request card): '#' is call order, not a sortable metric. */
 type ToolSortKey = 'order' | 'name' | 'target' | 'in' | 'out' | 'time';
 
@@ -70,9 +75,11 @@ const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] =
   { id: 'chart', title: 'Tokens per conversation', icon: '▦', hint: 'Token totals per conversation' },
   { id: 'table', title: 'Conversations', icon: '☰', hint: 'Sortable, filterable conversations table' },
   { id: 'context', title: 'Current Context Status', icon: '≣', hint: 'Selected conversation context occupancy' },
+  { id: 'costMap', title: 'Prompt cost map', icon: '⊛', hint: 'Start vs end context, cost, and LLM iterations for every prompt in scope' },
   { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
-  { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' },
   { id: 'toolTimeline', title: 'Prompt timeline', icon: '▥', hint: 'LLM and tool calls of the selected prompt, in sequence' },
+  { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' },
+  { id: 'tools', title: 'Tools', icon: '⚙', hint: 'Every tool call of the selected prompt — click a row for its call detail below' },
   { id: 'callDetail', title: 'Call detail', icon: '⌖', hint: 'Bounded detail for the selected LLM or tool call' }
 ];
 
@@ -87,6 +94,8 @@ const TABLE_TIME_FILTERS: { key: TableTimeFilter; label: string; days?: number }
 interface PersistedState {
   layout?: LayoutId;
   sectionsCollapsed?: Partial<Record<SectionId, boolean>>;
+  costMapScope?: CostMapScope;
+  costMapPeriod?: TableTimeFilter;
 }
 
 interface State {
@@ -116,6 +125,12 @@ interface State {
   promptExpanded: boolean;
   /** Call selected in the Prompt timeline / Tools table, driving Call detail. */
   selectedCall?: TimelineSelection;
+  /** Prompt cost map: scope toggle, period filter, and optional model filter (DD-009/DD-020). */
+  costMapScope: CostMapScope;
+  costMapPeriod: TableTimeFilter;
+  costMapModelFilter?: string;
+  /** Period-mode point activation on another conversation: prompt to select once its detail arrives. */
+  pendingPromptSelect?: { conversationId: string; promptIndex: number };
 }
 
 /**
@@ -128,6 +143,17 @@ const toolDetailCache = new Map<string, ToolCallDetail | 'loading'>();
 function toolDetailKey(provider: ProviderId, conversationId: string, toolCallId: string): string {
   return `${provider}/${conversationId}/${toolCallId}`;
 }
+
+/**
+ * Selected-period projections for the Prompt cost map, keyed
+ * `${provider}/${days ?? 'all'}`; 'loading' while the host query is in
+ * flight. A cache, not view state. On every init the entries are marked
+ * stale instead of dropped: the stale points keep rendering (so the page
+ * height — and with it the scroll position — never jumps on the periodic
+ * refresh) while a fresh query runs in the background.
+ */
+const costMapPeriodCache = new Map<string, CostMapPeriodPayload | 'loading'>();
+const costMapPeriodStale = new Set<string>();
 
 const persisted = vscodeApi.getState<PersistedState>();
 
@@ -149,13 +175,20 @@ const state: State = {
   sectionsCollapsed: persisted?.sectionsCollapsed ?? {},
   toolsSortKey: 'order',
   toolsSortDir: 'asc',
-  promptExpanded: false
+  promptExpanded: false,
+  costMapScope: persisted?.costMapScope === 'period' ? 'period' : 'conversation',
+  costMapPeriod:
+    persisted?.costMapPeriod && TABLE_TIME_FILTERS.some((f) => f.key === persisted.costMapPeriod)
+      ? persisted.costMapPeriod
+      : 'all'
 };
 
 function persistState(): void {
   vscodeApi.setState({
     layout: state.layout,
-    sectionsCollapsed: state.sectionsCollapsed
+    sectionsCollapsed: state.sectionsCollapsed,
+    costMapScope: state.costMapScope,
+    costMapPeriod: state.costMapPeriod
   } satisfies PersistedState);
 }
 
@@ -455,6 +488,7 @@ function selectRequest(index: number): void {
   state.selectedRequestIndex = index;
   state.sectionsCollapsed.request = false;
   state.sectionsCollapsed.toolTimeline = false;
+  state.sectionsCollapsed.tools = false;
   state.promptExpanded = false;
   state.selectedCall = undefined;
   persistState();
@@ -1617,101 +1651,6 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
     card.appendChild(renderToolActivityChart(request.tools));
   }
 
-  // ---- tools table (sortable on heading click) ----
-  if (request.tools?.length) {
-    card.appendChild(subHeading(`Tools (${request.tools.length})`));
-    const scroll = document.createElement('div');
-    scroll.className = 'table-scroll tools-scroll';
-    const table = document.createElement('table');
-    table.className = 'conv-table tools-table';
-
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-    for (const col of TOOLS_COLUMNS) {
-      const th = document.createElement('th');
-      if (col.numeric) th.className = 'numeric';
-      if (col.key) {
-        th.setAttribute(
-          'aria-sort',
-          state.toolsSortKey === col.key ? (state.toolsSortDir === 'asc' ? 'ascending' : 'descending') : 'none'
-        );
-        const button = document.createElement('button');
-        button.className = 'th-button' + (state.toolsSortKey === col.key ? ' active' : '');
-        button.textContent = col.label + toolsSortArrow(col.key);
-        button.title = `Sort by ${col.label.toLowerCase()}`;
-        button.addEventListener('click', () => setToolsSort(col.key!));
-        th.appendChild(button);
-      } else {
-        th.textContent = col.label;
-      }
-      headRow.appendChild(th);
-    }
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    sortedTools(request.tools).forEach(({ tool, order }) => {
-      const tr = document.createElement('tr');
-      // '#' is the call's position in the actual sequence, so order-1 is the
-      // tools[] index — the same key the Prompt timeline columns select on.
-      if (state.selectedCall?.kind === 'tool' && state.selectedCall.index === order - 1) tr.classList.add('active');
-      tr.tabIndex = 0;
-      tr.setAttribute('role', 'button');
-      tr.setAttribute('aria-label', `Inspect tool call ${order}: ${tool.name}`);
-      tr.addEventListener('click', () => selectCall({ kind: 'tool', index: order - 1 }));
-      tr.addEventListener('keydown', (ev: KeyboardEvent) => {
-        if (ev.key === 'Enter' || ev.key === ' ') {
-          ev.preventDefault();
-          selectCall({ kind: 'tool', index: order - 1 });
-        }
-      });
-      const cells: { text: string; numeric?: boolean; className?: string; tooltip?: string }[] = [
-        { text: String(order), className: 'muted' },
-        { text: tool.name },
-        { text: tool.inputPreview ?? '—', className: 'cell-target', tooltip: tool.inputPreview },
-        { text: formatTokensCompact(tool.inputChars), numeric: true, tooltip: `${formatTokens(tool.inputChars)} input chars` },
-        {
-          text: tool.outputChars !== undefined ? formatTokensCompact(tool.outputChars) : '—',
-          numeric: true,
-          tooltip: tool.outputChars !== undefined ? `${formatTokens(tool.outputChars)} output chars` : 'no result recorded'
-        },
-        {
-          text: toolDuration(tool),
-          numeric: true,
-          tooltip: tool.durationSource === 'derived' ? 'Derived from tool_use → tool_result timestamps' : undefined
-        },
-        { text: tool.isError ? '⚠' : '', className: tool.isError ? 'tool-error' : undefined, tooltip: tool.isError ? 'Tool returned an error' : undefined }
-      ];
-      for (const cell of cells) {
-        const td = document.createElement('td');
-        td.textContent = cell.text;
-        if (cell.numeric) td.classList.add('numeric');
-        if (cell.className) td.classList.add(cell.className);
-        if (cell.tooltip) td.title = cell.tooltip;
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-
-      if (tool.agentId) {
-        const subRow = document.createElement('tr');
-        subRow.className = 'subagent-row';
-        const td = document.createElement('td');
-        td.colSpan = 7;
-        const bits = [`↳ subagent ${tool.agentId.slice(0, 10)}…`];
-        if (tool.subagentModel) bits.push(shortModelName(tool.subagentModel));
-        if (tool.subagentTokens !== undefined) bits.push(`${formatTokensCompact(tool.subagentTokens)} tokens`);
-        if (tool.subagentCostUsd !== undefined) bits.push(formatUsd(tool.subagentCostUsd));
-        td.textContent = bits.join(' · ');
-        td.title = 'Delegated work: totals scanned from the subagent transcript, billed in addition to this conversation';
-        subRow.appendChild(td);
-        tbody.appendChild(subRow);
-      }
-    });
-    table.appendChild(tbody);
-    scroll.appendChild(table);
-    card.appendChild(scroll);
-  }
-
   // ---- shares of the conversation ----
   const shares = document.createElement('div');
   shares.className = 'shares';
@@ -1721,6 +1660,119 @@ function renderEnrichedRequestCard(container: HTMLElement): void {
   card.appendChild(shares);
 
   container.appendChild(card);
+}
+
+// ---- Tools section: the selected prompt's per-call table -----------------------------
+// Sortable on heading click; a row selects the call and drives the Call
+// detail section directly below.
+
+function renderToolsSection(body: HTMLElement): void {
+  const request = selectedRequest();
+  if (!request) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Click a bar in the conversation chart to inspect a prompt.';
+    body.appendChild(empty);
+    return;
+  }
+  if (!request.tools?.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No tool calls in this prompt.';
+    body.appendChild(empty);
+    return;
+  }
+
+  const scroll = document.createElement('div');
+  scroll.className = 'table-scroll tools-scroll';
+  const table = document.createElement('table');
+  table.className = 'conv-table tools-table';
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const col of TOOLS_COLUMNS) {
+    const th = document.createElement('th');
+    if (col.numeric) th.className = 'numeric';
+    if (col.key) {
+      th.setAttribute(
+        'aria-sort',
+        state.toolsSortKey === col.key ? (state.toolsSortDir === 'asc' ? 'ascending' : 'descending') : 'none'
+      );
+      const button = document.createElement('button');
+      button.className = 'th-button' + (state.toolsSortKey === col.key ? ' active' : '');
+      button.textContent = col.label + toolsSortArrow(col.key);
+      button.title = `Sort by ${col.label.toLowerCase()}`;
+      button.addEventListener('click', () => setToolsSort(col.key!));
+      th.appendChild(button);
+    } else {
+      th.textContent = col.label;
+    }
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  sortedTools(request.tools).forEach(({ tool, order }) => {
+    const tr = document.createElement('tr');
+    // '#' is the call's position in the actual sequence, so order-1 is the
+    // tools[] index — the same key the Prompt timeline columns select on.
+    if (state.selectedCall?.kind === 'tool' && state.selectedCall.index === order - 1) tr.classList.add('active');
+    tr.tabIndex = 0;
+    tr.setAttribute('role', 'button');
+    tr.setAttribute('aria-label', `Inspect tool call ${order}: ${tool.name}`);
+    tr.addEventListener('click', () => selectCall({ kind: 'tool', index: order - 1 }));
+    tr.addEventListener('keydown', (ev: KeyboardEvent) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        selectCall({ kind: 'tool', index: order - 1 });
+      }
+    });
+    const cells: { text: string; numeric?: boolean; className?: string; tooltip?: string }[] = [
+      { text: String(order), className: 'muted' },
+      { text: tool.name },
+      { text: tool.inputPreview ?? '—', className: 'cell-target', tooltip: tool.inputPreview },
+      { text: formatTokensCompact(tool.inputChars), numeric: true, tooltip: `${formatTokens(tool.inputChars)} input chars` },
+      {
+        text: tool.outputChars !== undefined ? formatTokensCompact(tool.outputChars) : '—',
+        numeric: true,
+        tooltip: tool.outputChars !== undefined ? `${formatTokens(tool.outputChars)} output chars` : 'no result recorded'
+      },
+      {
+        text: toolDuration(tool),
+        numeric: true,
+        tooltip: tool.durationSource === 'derived' ? 'Derived from tool_use → tool_result timestamps' : undefined
+      },
+      { text: tool.isError ? '⚠' : '', className: tool.isError ? 'tool-error' : undefined, tooltip: tool.isError ? 'Tool returned an error' : undefined }
+    ];
+    for (const cell of cells) {
+      const td = document.createElement('td');
+      td.textContent = cell.text;
+      if (cell.numeric) td.classList.add('numeric');
+      if (cell.className) td.classList.add(cell.className);
+      if (cell.tooltip) td.title = cell.tooltip;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+
+    if (tool.agentId) {
+      const subRow = document.createElement('tr');
+      subRow.className = 'subagent-row';
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      const bits = [`↳ subagent ${tool.agentId.slice(0, 10)}…`];
+      if (tool.subagentModel) bits.push(shortModelName(tool.subagentModel));
+      if (tool.subagentTokens !== undefined) bits.push(`${formatTokensCompact(tool.subagentTokens)} tokens`);
+      if (tool.subagentCostUsd !== undefined) bits.push(formatUsd(tool.subagentCostUsd));
+      td.textContent = bits.join(' · ');
+      td.title = 'Delegated work: totals scanned from the subagent transcript, billed in addition to this conversation';
+      subRow.appendChild(td);
+      tbody.appendChild(subRow);
+    }
+  });
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  body.appendChild(scroll);
 }
 
 // ---- Call detail section (plans/2026-07/07/call-details) ---------------------------
@@ -2062,6 +2114,272 @@ function renderCallDetailSection(body: HTMLElement): void {
   if (call) renderLlmCallCard(body, request, call, sel.index);
 }
 
+// ---- Prompt cost map section (plans/2026-07/19/prompt-cost-map) ---------------------
+
+const COST_MAP_SCOPES: { key: CostMapScope; label: string; hint: string }[] = [
+  { key: 'conversation', label: 'Selected conversation', hint: 'Every prompt in the selected conversation' },
+  {
+    key: 'period',
+    label: 'Selected period',
+    hint: 'Every prompt of this workspace and provider inside the period filter'
+  }
+];
+
+function costMapPeriodDays(): number | undefined {
+  return TABLE_TIME_FILTERS.find((filter) => filter.key === state.costMapPeriod)?.days;
+}
+
+function costMapPeriodLabel(): string {
+  return TABLE_TIME_FILTERS.find((filter) => filter.key === state.costMapPeriod)?.label ?? 'All time';
+}
+
+function ensureCostMapPeriodData(): CostMapPeriodPayload | 'loading' {
+  const key = `${state.selectedProvider}/${costMapPeriodDays() ?? 'all'}`;
+  const cached = costMapPeriodCache.get(key);
+  if (cached === 'loading') return cached;
+  if (cached && !costMapPeriodStale.has(key)) return cached;
+  // Stale-while-revalidate: keep serving the stale points while the fresh
+  // query runs, so the section never shrinks to a loading placeholder.
+  costMapPeriodStale.delete(key);
+  if (!cached) costMapPeriodCache.set(key, 'loading');
+  post({ type: 'getCostMapPeriod', provider: state.selectedProvider, days: costMapPeriodDays() });
+  return cached ?? 'loading';
+}
+
+interface CostMapScopeData {
+  points: CostMapPoint[];
+  totalPrompts: number;
+  excludedPrompts: number;
+  reasons: CostMapExclusions;
+  loading: boolean;
+  /** Set in period scope only; prefixes the collapsed summary. */
+  periodLabel?: string;
+}
+
+/** The cost-map input for the active scope; undefined when nothing is selected yet. */
+function costMapData(): CostMapScopeData | undefined {
+  if (state.costMapScope === 'conversation') {
+    const detail = state.detail;
+    if (!detail) return undefined;
+    const derived = deriveCostMapPoints(detail.requests, { id: detail.id, title: detail.title });
+    return { ...derived, loading: false };
+  }
+  const label = costMapPeriodLabel();
+  const data = ensureCostMapPeriodData();
+  if (data === 'loading') {
+    return { points: [], totalPrompts: 0, excludedPrompts: 0, reasons: emptyExclusions(), loading: true, periodLabel: label };
+  }
+  return {
+    points: data.points,
+    totalPrompts: data.totalPrompts,
+    excludedPrompts: data.excludedPrompts,
+    reasons: data.reasons,
+    loading: false,
+    periodLabel: label
+  };
+}
+
+function costMapSummary(): string {
+  const data = costMapData();
+  if (!data) return 'none selected';
+  const prefix = data.periodLabel ? `${data.periodLabel} · ` : '';
+  if (data.loading) return `${prefix}loading…`;
+  const parts = [`${data.totalPrompts} prompt${data.totalPrompts === 1 ? '' : 's'}`, `${data.points.length} charted`];
+  if (data.excludedPrompts > 0) parts.push(`${data.excludedPrompts} not charted`);
+  if (data.points.length > 0) {
+    parts.push(`${formatUsd(data.points.reduce((sum, p) => sum + p.costUsd, 0))} total`);
+  }
+  return prefix + parts.join(' · ');
+}
+
+function setCostMapScope(scope: CostMapScope): void {
+  state.costMapScope = scope;
+  state.costMapModelFilter = undefined;
+  persistState();
+  render();
+}
+
+function setCostMapPeriod(key: TableTimeFilter): void {
+  state.costMapPeriod = key;
+  state.costMapModelFilter = undefined;
+  persistState();
+  render();
+}
+
+/**
+ * Point activation (OP-006/DD-020): reuse the existing selection path. A
+ * point of the loaded conversation selects that prompt directly; a
+ * period-mode point of another conversation loads that conversation first
+ * and selects the prompt when its detail arrives. The page never scrolls —
+ * render() restores scroll position.
+ */
+function selectCostMapPoint(point: CostMapPoint): void {
+  const detail = state.detail;
+  if (point.conversationId && point.conversationId !== detail?.id) {
+    state.pendingPromptSelect = { conversationId: point.conversationId, promptIndex: point.promptIndex };
+    state.loadingId = point.conversationId;
+    state.sectionsCollapsed.thread = false;
+    state.sectionsCollapsed.request = false;
+    persistState();
+    post({ type: 'selectConversation', provider: state.selectedProvider, id: point.conversationId });
+    render();
+    return;
+  }
+  selectRequest(point.promptIndex);
+}
+
+function costMapExclusionBits(reasons: CostMapExclusions): string[] {
+  const bits: string[] = [];
+  if (reasons.noLlmCalls > 0) bits.push(`no LLM calls ×${reasons.noLlmCalls}`);
+  if (reasons.missingFirstContext > 0) bits.push(`missing first-call context ×${reasons.missingFirstContext}`);
+  if (reasons.missingLastContext > 0) bits.push(`missing last-call context ×${reasons.missingLastContext}`);
+  if (reasons.costUnavailable > 0) bits.push(`cost unavailable ×${reasons.costUnavailable}`);
+  return bits;
+}
+
+function renderCostMapSection(body: HTMLElement): void {
+  // scope toggle + period filter (period pills only in period mode, DD-020)
+  const toolbar = document.createElement('div');
+  toolbar.className = 'overview-toolbar';
+  const scopePills = document.createElement('div');
+  scopePills.className = 'filter-pills';
+  for (const scope of COST_MAP_SCOPES) {
+    const button = document.createElement('button');
+    button.className = 'filter-pill' + (state.costMapScope === scope.key ? ' active' : '');
+    button.textContent = scope.label;
+    button.title = scope.hint;
+    button.addEventListener('click', () => setCostMapScope(scope.key));
+    scopePills.appendChild(button);
+  }
+  toolbar.appendChild(scopePills);
+  if (state.costMapScope === 'period') {
+    const periodPills = document.createElement('div');
+    periodPills.className = 'filter-pills';
+    for (const filter of TABLE_TIME_FILTERS) {
+      const button = document.createElement('button');
+      button.className = 'filter-pill' + (state.costMapPeriod === filter.key ? ' active' : '');
+      button.textContent = filter.label;
+      button.title = `Prompts whose start time falls in: ${filter.label.toLowerCase()}`;
+      button.addEventListener('click', () => setCostMapPeriod(filter.key));
+      periodPills.appendChild(button);
+    }
+    toolbar.appendChild(periodPills);
+  }
+  body.appendChild(toolbar);
+
+  const data = costMapData();
+  if (!data) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Select a conversation to map its prompts.';
+    body.appendChild(empty);
+    return;
+  }
+  if (data.loading) {
+    const loading = document.createElement('div');
+    loading.className = 'empty';
+    loading.textContent = 'Scanning workspace conversations for this period…';
+    body.appendChild(loading);
+    return;
+  }
+  if (data.totalPrompts === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent =
+      state.costMapScope === 'period'
+        ? `No ${PROVIDER_LABELS[state.selectedProvider]} prompts in this workspace for ${costMapPeriodLabel().toLowerCase()}.`
+        : 'No prompts in this conversation yet.';
+    body.appendChild(empty);
+    return;
+  }
+
+  // honest coverage line (DD-010): counts + reasons, never zero-fabrication
+  const status = document.createElement('div');
+  status.className = 'costmap-status';
+  const reasonBits = costMapExclusionBits(data.reasons);
+  status.textContent =
+    `${data.points.length} of ${data.totalPrompts} prompt${data.totalPrompts === 1 ? '' : 's'} charted` +
+    (reasonBits.length > 0 ? ` — not charted: ${reasonBits.join(', ')}` : '');
+  body.appendChild(status);
+
+  if (data.points.length === 0) {
+    // explicit unavailable state (DD-011), e.g. Copilot's missing per-call context
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent =
+      `No prompt here exposes the data this map needs — ${PROVIDER_LABELS[state.selectedProvider]} ` +
+      'is missing per-LLM-call context or usable cost for every prompt in scope (reasons above). ' +
+      'Nothing is plotted rather than showing made-up zeros.';
+    body.appendChild(empty);
+    return;
+  }
+
+  // compact model filter when several priced models are visible (DD-009)
+  const modelKeys: string[] = [];
+  for (const point of data.points) {
+    const key = point.model ?? 'unknown';
+    if (!modelKeys.includes(key)) modelKeys.push(key);
+  }
+  const activeModelFilter =
+    state.costMapModelFilter && modelKeys.includes(state.costMapModelFilter) ? state.costMapModelFilter : undefined;
+  if (modelKeys.length > 1) {
+    const modelPills = document.createElement('div');
+    modelPills.className = 'filter-pills costmap-models';
+    const allButton = document.createElement('button');
+    allButton.className = 'filter-pill' + (activeModelFilter === undefined ? ' active' : '');
+    allButton.textContent = 'All models';
+    allButton.addEventListener('click', () => {
+      state.costMapModelFilter = undefined;
+      render();
+    });
+    modelPills.appendChild(allButton);
+    for (const key of modelKeys) {
+      const button = document.createElement('button');
+      button.className = 'filter-pill' + (activeModelFilter === key ? ' active' : '');
+      button.textContent = key === 'unknown' ? 'unknown model' : shortModelName(key);
+      button.title = key === 'unknown' ? 'Prompts with no recorded model' : key;
+      button.addEventListener('click', () => {
+        state.costMapModelFilter = key;
+        render();
+      });
+      modelPills.appendChild(button);
+    }
+    body.appendChild(modelPills);
+  }
+  const points =
+    activeModelFilter === undefined ? data.points : data.points.filter((p) => (p.model ?? 'unknown') === activeModelFilter);
+
+  if (points.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No charted prompt matches the model filter.';
+    body.appendChild(empty);
+    return;
+  }
+
+  const selected: CostMapSelection | undefined =
+    state.detail && state.selectedRequestIndex !== undefined
+      ? { conversationId: state.detail.id, promptIndex: state.selectedRequestIndex }
+      : undefined;
+  const chartHost = document.createElement('div');
+  chartHost.className = 'chart-host';
+  body.appendChild(chartHost);
+  renderCostMapChart(chartHost, {
+    points,
+    selected,
+    onSelect: selectCostMapPoint,
+    showConversation: state.costMapScope === 'period'
+  });
+
+  // explanatory framing, not causal (DD-017)
+  const hint = document.createElement('div');
+  hint.className = 'chart-hint';
+  hint.textContent =
+    'Prompts on the same diagonal grew their context by the same amount; up-right on a diagonal means the same growth from a larger start. ' +
+    'An explanatory comparison, not a causal model — model rates, cache pricing, and output tokens also shape cost.';
+  body.appendChild(hint);
+}
+
 // ---- conversations table ------------------------------------------------------------
 
 const TABLE_COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
@@ -2202,6 +2520,17 @@ function sectionSummary(id: SectionId, items: ConversationListItem[]): string {
     parts.push(`${toolCount} tool call${toolCount === 1 ? '' : 's'}`);
     const hasTime = (request.tools ?? []).some((t) => t.durationMs !== undefined);
     return parts.join(' · ') + (hasTime || toolCount === 0 ? '' : ' · time unavailable');
+  }
+  if (id === 'costMap') {
+    return costMapSummary();
+  }
+  if (id === 'tools') {
+    const request = selectedRequest();
+    if (!request) return 'none selected';
+    const toolCount = request.tools?.length ?? 0;
+    if (toolCount === 0) return 'no tool calls';
+    const errors = (request.tools ?? []).filter((t) => t.isError).length;
+    return `${toolCount} call${toolCount === 1 ? '' : 's'}` + (errors > 0 ? ` · ${errors} error${errors === 1 ? '' : 's'}` : '');
   }
   if (id === 'callDetail') {
     const request = selectedRequest();
@@ -2354,8 +2683,18 @@ function renderSectionBody(id: SectionId, body: HTMLElement, items: Conversation
     return;
   }
 
+  if (id === 'tools') {
+    renderToolsSection(body);
+    return;
+  }
+
   if (id === 'callDetail') {
     renderCallDetailSection(body);
+    return;
+  }
+
+  if (id === 'costMap') {
+    renderCostMapSection(body);
     return;
   }
 
@@ -2408,18 +2747,34 @@ function toggleSection(id: SectionId): void {
   render();
 }
 
+/**
+ * Side-bar navigation: scroll the stack to a section. A collapsed target is
+ * expanded first (a jump to a bare heading bar would show nothing) — but the
+ * side bar never collapses anything; that stays on the section heading.
+ */
+function jumpToSection(id: SectionId): void {
+  if (state.sectionsCollapsed[id]) {
+    state.sectionsCollapsed[id] = false;
+    persistState();
+    render();
+  }
+  const target = document.querySelector<HTMLElement>(`section[data-section="${id}"]`);
+  target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function renderSideBar(container: HTMLElement): void {
   const bar = document.createElement('div');
   bar.className = 'side-bar';
   for (const section of visibleSections()) {
+    // The icon mirrors the section's heading-bar state — lit when the panel
+    // is expanded, dimmed when collapsed — but clicking always navigates.
     const collapsed = !!state.sectionsCollapsed[section.id];
     const button = document.createElement('button');
     button.className = 'side-icon' + (collapsed ? '' : ' active');
     button.textContent = section.icon;
-    button.title = `${section.title} — ${collapsed ? 'expand' : 'collapse'}`;
-    button.setAttribute('aria-pressed', String(!collapsed));
-    button.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Collapse'} panel: ${section.title}`);
-    button.addEventListener('click', () => toggleSection(section.id));
+    button.title = `Jump to ${section.title}${collapsed ? ' (collapsed — will expand)' : ''}`;
+    button.setAttribute('aria-label', `Jump to section: ${section.title}${collapsed ? ' (collapsed — will expand)' : ''}`);
+    button.addEventListener('click', () => jumpToSection(section.id));
     bar.appendChild(button);
   }
   container.appendChild(bar);
@@ -2526,14 +2881,20 @@ function renderStorageFooter(container: HTMLElement): void {
 
 // ---- root render ------------------------------------------------------------------
 
+/** Inner scrollable areas whose position must survive a full re-render. */
+const SCROLL_RESTORE_SELECTORS = [
+  '.stack-pane',
+  'section[data-section="toolTimeline"] .chart-scroll',
+  'section[data-section="tools"] .tools-scroll',
+  'section[data-section="table"] .table-scroll'
+];
+
 function render(): void {
   const app = root();
-  const previousStack = app.querySelector('.stack-pane');
-  const previousScroll = previousStack ? previousStack.scrollTop : 0;
-  const previousTimelineScroll = previousStack?.querySelector(
-    'section[data-section="toolTimeline"] .chart-scroll'
-  ) as HTMLElement | null;
-  const previousTimelineScrollLeft = previousTimelineScroll?.scrollLeft ?? 0;
+  const previousScrolls = SCROLL_RESTORE_SELECTORS.map((selector) => {
+    const el = app.querySelector<HTMLElement>(selector);
+    return el ? { selector, top: el.scrollTop, left: el.scrollLeft } : undefined;
+  });
 
   app.innerHTML = '';
   if (LAYOUT_EXPERIMENTS) renderDesignBar(app);
@@ -2548,12 +2909,30 @@ function render(): void {
   app.appendChild(body);
   renderStorageFooter(app);
 
-  // Selections update panels in place: restore the scroll position exactly,
+  // Selections update panels in place: restore the scroll positions exactly,
   // never animate or jump the page.
-  const stack = app.querySelector('.stack-pane');
-  if (stack) stack.scrollTop = previousScroll;
-  const timelineScroll = app.querySelector('section[data-section="toolTimeline"] .chart-scroll') as HTMLElement | null;
-  if (timelineScroll) timelineScroll.scrollLeft = previousTimelineScrollLeft;
+  for (const saved of previousScrolls) {
+    if (!saved) continue;
+    const el = app.querySelector<HTMLElement>(saved.selector);
+    if (!el) continue;
+    el.scrollTop = saved.top;
+    el.scrollLeft = saved.left;
+  }
+}
+
+/** Period-mode activation: jump to the pending prompt once its conversation's detail is in. */
+function applyPendingPromptSelect(detail: ConversationDetailPayload): void {
+  const pending = state.pendingPromptSelect;
+  if (!pending || detail.id !== pending.conversationId) return;
+  state.pendingPromptSelect = undefined;
+  if (detail.requests.length === 0) return;
+  state.selectedRequestIndex = Math.min(pending.promptIndex, detail.requests.length - 1);
+  state.selectedCall = undefined;
+  state.promptExpanded = false;
+  state.sectionsCollapsed.request = false;
+  state.sectionsCollapsed.toolTimeline = false;
+  state.sectionsCollapsed.tools = false;
+  persistState();
 }
 
 window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) => {
@@ -2562,10 +2941,20 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
     state.providers = message.providers;
     state.workspacePath = message.workspacePath;
     state.conversationsByProvider = message.conversationsByProvider;
+    for (const [key, value] of costMapPeriodCache) {
+      if (value !== 'loading') costMapPeriodStale.add(key);
+    }
     applyDetail(message.selected, true);
+    if (message.selected) applyPendingPromptSelect(message.selected);
     render();
   } else if (message.type === 'conversationDetail') {
     applyDetail(message.detail, true);
+    applyPendingPromptSelect(message.detail);
+    render();
+  } else if (message.type === 'costMapPeriod') {
+    const key = `${message.payload.provider}/${message.payload.days ?? 'all'}`;
+    costMapPeriodCache.set(key, message.payload);
+    costMapPeriodStale.delete(key);
     render();
   } else if (message.type === 'toolCallDetail') {
     const provider = state.detail?.provider ?? state.selectedProvider;

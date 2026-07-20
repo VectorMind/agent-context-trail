@@ -36,6 +36,15 @@ Instead, related measures get their own aligned lane or strip on a shared
 x-axis (one column per request/conversation), stacked vertically so they line
 up but are never visually fused into one scale.
 
+What this rule forbids is the dual-axis overlay: two unrelated value scales
+drawn to the same height inside one axis frame. It does not forbid a
+deliberate multidimensional scatter plot in which each visual channel — x
+position, y position, mark area, mark color — carries exactly one measure
+with its own honest, labeled legend, and no channel pretends to share another
+channel's scale. A scatter's two axes may even carry the same unit (for
+example, start-of-request vs. end-of-request context tokens); the axes then
+genuinely share one scale rather than faking one.
+
 ## Identity is never color-alone
 
 Wherever color carries identity (which model served a request, which token

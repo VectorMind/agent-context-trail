@@ -81,6 +81,26 @@ order:
   path or context-window facts when the provider exposes them. Fields that a
   provider cannot expose remain unavailable rather than being shown as zero.
 
+  The per-tool call table (target preview, input size, output size, latency,
+  error status, subagent attribution) renders as its own **Tools** panel
+  directly above the call-level drill-down it feeds: activating a row selects
+  that call in the Call detail panel below.
+- **Prompt cost map** - a collapsible panel placed after the
+  conversation-level overview surfaces and before the Conversation thread
+  view, so it reads as a prompt selector feeding the panels below: one
+  scatter mark per
+  request, encoding context tokens at the request's first LLM call (x),
+  context tokens at its last LLM call (y), USD cost (mark area), and LLM-call
+  count (mark color with a labeled gradient legend). It carries a two-state
+  scope toggle: **Selected conversation** (default; the current conversation's
+  requests) and **Selected period** (requests of the current workspace and
+  currently selected provider whose start time falls inside an All time /
+  rolling day / week / month filter — the narrow exception defined in
+  `product-scope.md`). Requests whose endpoints or cost are unavailable are
+  reported as explicit exclusion counts with reasons, never plotted as
+  zero-valued marks. Activating a mark selects that request (and, in period
+  mode, its conversation first) through the normal in-place selection path.
+
 Panel interaction rules:
 
 - Selecting a conversation (table row or overview bar) or a request (thread
@@ -95,14 +115,21 @@ Panel interaction rules:
   token parts; this panel may additionally show total context capacity,
   reserved-for-output budget, fill percentage, and long-context or
   expensive-context mode for the selected conversation.
-- Every panel collapses/expands from two equivalent controls: its own
-  contrasted heading bar and the matching icon in the side app bar. A
-  collapsed panel keeps showing a live status summary in its heading (counts,
-  selected conversation totals, selected request cost). Collapse state
-  persists across panel reloads.
+- Every panel collapses/expands from its own contrasted heading bar. The
+  matching icon in the side app bar is navigation, not a collapse control: it
+  scrolls the page to that panel, expanding it first when collapsed, and its
+  highlighted/dimmed state mirrors the panel heading's expanded/collapsed
+  state. A collapsed panel keeps showing a live status summary in its heading
+  (counts, selected conversation totals, selected request cost). Collapse
+  state persists across panel reloads.
 - No level of aggregation above one conversation is computed or displayed
   (see `product-scope.md`): the overview chart and table show per-conversation
-  rows only, never cross-conversation totals.
+  rows only, never cross-conversation totals. The one narrow exception is the
+  Prompt cost map's Selected period mode, bounded exactly as defined in
+  `product-scope.md`: request-level points across the current workspace and
+  selected provider, filtered by a rolling window, with no persisted or
+  displayed period totals beyond the visible points' plain sum and count in
+  that panel's own heading.
 
 The panel is the only place full token counts, tool-call counts, and per-request
 detail are shown. The status bar may surface only the limited passive
