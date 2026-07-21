@@ -1,76 +1,64 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyCopilotOtel, CopilotOtelProbe } from './config';
+import { classifyCopilotOtel, CopilotOtelProbe, parseEndpoint } from './config';
 
-const usable: CopilotOtelProbe = {
+const loopback: CopilotOtelProbe = {
   enabled: true,
-  exporterType: 'file',
-  outfile: 'C:\\trace\\copilot-otel.jsonl',
-  captureContent: false,
-  fileExists: true,
-  fileReadable: true,
-  fileSizeBytes: 4096
+  exporterType: 'otlp-http',
+  otlpEndpoint: 'http://127.0.0.1:9876',
+  captureContent: false
 };
 
 test('unset configuration classifies as disabled', () => {
-  const status = classifyCopilotOtel({});
-  assert.equal(status.kind, 'disabled');
-  assert.equal(status.ready, false);
-});
-
-test('enabled:false classifies as disabled, not managed', () => {
-  const status = classifyCopilotOtel({ enabled: false });
-  assert.equal(status.kind, 'disabled');
+  const c = classifyCopilotOtel({});
+  assert.equal(c.kind, 'disabled');
+  assert.equal(c.managed, false);
 });
 
 test('policy-forced off takes precedence over an on user value', () => {
-  const status = classifyCopilotOtel({ ...usable, enabledByPolicy: false });
-  assert.equal(status.kind, 'managed-disabled');
-  assert.equal(status.ready, false);
+  const c = classifyCopilotOtel({ ...loopback, enabledByPolicy: false });
+  assert.equal(c.kind, 'managed-disabled');
 });
 
-test('enabled with a non-file exporter classifies as wrong-exporter and names it', () => {
-  const status = classifyCopilotOtel({ enabled: true, exporterType: 'otlp' });
-  assert.equal(status.kind, 'wrong-exporter');
-  assert.match(status.message, /"otlp"/);
+test('a non-otlp-http exporter classifies as wrong-exporter and names it', () => {
+  const c = classifyCopilotOtel({ enabled: true, exporterType: 'file' });
+  assert.equal(c.kind, 'wrong-exporter');
+  assert.match(c.message, /"file"/);
 });
 
-test('enabled with an unset exporter is wrong-exporter (no fabricated default)', () => {
-  const status = classifyCopilotOtel({ enabled: true });
-  assert.equal(status.kind, 'wrong-exporter');
-  assert.match(status.message, /unset/);
+test('otlp-http without an endpoint classifies as endpoint-missing', () => {
+  const c = classifyCopilotOtel({ enabled: true, exporterType: 'otlp-http' });
+  assert.equal(c.kind, 'endpoint-missing');
 });
 
-test('file exporter without an outfile classifies as missing-outfile', () => {
-  const status = classifyCopilotOtel({ enabled: true, exporterType: 'file' });
-  assert.equal(status.kind, 'missing-outfile');
+test('a non-loopback endpoint classifies as endpoint-elsewhere and is left untouched', () => {
+  const c = classifyCopilotOtel({ ...loopback, otlpEndpoint: 'http://collector.corp:4318' });
+  assert.equal(c.kind, 'endpoint-elsewhere');
+  assert.match(c.message, /collector\.corp/);
 });
 
-test('a configured outfile that does not exist classifies as unreadable', () => {
-  const status = classifyCopilotOtel({ ...usable, fileExists: false });
-  assert.equal(status.kind, 'unreadable');
-  assert.match(status.message, /copilot-otel\.jsonl/);
+test('a loopback endpoint classifies as loopback and parses host/port', () => {
+  const c = classifyCopilotOtel(loopback);
+  assert.equal(c.kind, 'loopback');
+  assert.equal(c.host, '127.0.0.1');
+  assert.equal(c.port, 9876);
 });
 
-test('a configured outfile that cannot be read classifies as unreadable', () => {
-  const status = classifyCopilotOtel({ ...usable, fileReadable: false });
-  assert.equal(status.kind, 'unreadable');
+test('localhost is treated as loopback too', () => {
+  const c = classifyCopilotOtel({ ...loopback, otlpEndpoint: 'http://localhost:4318' });
+  assert.equal(c.kind, 'loopback');
+  assert.equal(c.port, 4318);
 });
 
-test('an existing empty outfile classifies as empty', () => {
-  const status = classifyCopilotOtel({ ...usable, fileSizeBytes: 0 });
-  assert.equal(status.kind, 'empty');
+test('content capture is surfaced (privacy warning) and policy presence sets managed', () => {
+  assert.equal(classifyCopilotOtel(loopback).contentCaptureEnabled, false);
+  assert.equal(classifyCopilotOtel({ ...loopback, captureContent: true }).contentCaptureEnabled, true);
+  assert.equal(classifyCopilotOtel({ ...loopback, enabledByPolicy: true }).managed, true);
 });
 
-test('a readable non-empty file exporter classifies as usable and ready', () => {
-  const status = classifyCopilotOtel(usable);
-  assert.equal(status.kind, 'usable');
-  assert.equal(status.ready, true);
-  assert.equal(status.outfile, usable.outfile);
-  assert.equal(status.fileSizeBytes, 4096);
-});
-
-test('content capture is surfaced even on a usable state (privacy warning)', () => {
-  assert.equal(classifyCopilotOtel(usable).contentCaptureEnabled, false);
-  assert.equal(classifyCopilotOtel({ ...usable, captureContent: true }).contentCaptureEnabled, true);
+test('parseEndpoint rejects junk and flags loopback correctly', () => {
+  assert.equal(parseEndpoint('not a url'), undefined);
+  assert.equal(parseEndpoint(undefined), undefined);
+  assert.equal(parseEndpoint('http://127.0.0.1:9876')?.loopback, true);
+  assert.equal(parseEndpoint('http://example.com:80')?.loopback, false);
 });

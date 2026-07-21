@@ -78,13 +78,33 @@ run, no export step.
   estimate as its own signal — never merged with it. When the session log
   includes model capacity, the latest request's input and context-window size
   also feed Current Context Status.
-- **What's not shown, and why**: cache-read/cache-write token counts.
-  Unlike Claude and Codex, Copilot's local log does not record them at all —
-  this is a real gap in the data, not something this extension chose to
-  hide. The Prompt timeline likewise cannot show context for each Copilot LLM
-  call from this zero-configuration source; the log stores only request-level
-  usage. Copilot Chat's opt-in OpenTelemetry exporter can expose per-call token
-  data, but Agent Context Trail does not ingest that export yet.
+- **What's not shown from the zero-config log, and why**: per-LLM-call and
+  cache token counts. Copilot's `chatSessions` log records only request-level
+  usage, so the Prompt timeline can't show per-call context from it — a real
+  gap in that source, not something this extension chose to hide. See the
+  opt-in enrichment below for how to fill it.
+- **Optional per-call enrichment (opt-in OpenTelemetry)**: Copilot Chat can
+  export one span per LLM call over OpenTelemetry. If *you* turn that on and
+  point it at a loopback endpoint, Agent Context Trail receives it locally and
+  fills the Prompt timeline with real per-call context — input, **cache-read**,
+  output, and reasoning tokens. Add these to your VS Code settings (the
+  extension **never** writes them for you) and pick any free port:
+
+  ```json
+  "github.copilot.chat.otel.enabled": true,
+  "github.copilot.chat.otel.exporterType": "otlp-http",
+  "github.copilot.chat.otel.otlpEndpoint": "http://127.0.0.1:9876",
+  "github.copilot.chat.otel.captureContent": false
+  ```
+
+  The extension binds that loopback port, keeps only allowlisted usage and
+  correlation fields (never prompts, code, tool payloads, or repository
+  metadata — those are dropped before anything is written, even if content
+  capture is left on), and stores them as its own daily JSONL under the
+  extension's storage, pruned to the current plus two preceding calendar
+  months. The panel's Storage Footer shows the activation state and how much
+  local usage history is on disk. Cache-**write** tokens stay unavailable
+  because Copilot does not emit them on any surface.
 - Cost is `estimated`, the same bring-your-own-token convention used for
   Claude and Codex: GitHub does not publish a Copilot token-to-USD rate, so
   this extension estimates against the resolved underlying model's public

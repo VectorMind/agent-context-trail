@@ -1,0 +1,680 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "copilot-chat"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "0.57.0"
+            }
+          },
+          {
+            "key": "session.id",
+            "value": {
+              "stringValue": "d40a7fdd-bcb6-4fab-83dd-7dc6dc0f2adf1784575800270"
+            }
+          }
+        ],
+        "droppedAttributesCount": 0
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "copilot-chat",
+            "version": "0.57.0"
+          },
+          "spans": [
+            {
+              "traceId": "d36d20a685446c1839e4dcd00a8ae64c",
+              "spanId": "c7f5438ee46a6323",
+              "parentSpanId": "3c3879f4a2576394",
+              "name": "chat mai-code-1-flash",
+              "kind": 3,
+              "startTimeUnixNano": "1784575940394000000",
+              "endTimeUnixNano": "1784575947682761400",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "mai-code-1-flash"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.max_tokens",
+                  "value": {
+                    "intValue": 128000
+                  }
+                },
+                {
+                  "key": "copilot_chat.request.max_prompt_tokens",
+                  "value": {
+                    "intValue": 127997
+                  }
+                },
+                {
+                  "key": "copilot_chat.session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "copilot_chat.chat_session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "panel/editAgent"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 23800
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 539
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "mai-code-1-flash"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "bd1af91e-ad02-47d8-b569-db2d5d11fe64"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 13184
+                  }
+                },
+                {
+                  "key": "copilot_chat.time_to_first_token",
+                  "value": {
+                    "intValue": 3816
+                  }
+                },
+                {
+                  "key": "gen_ai.request.stream",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.response.time_to_first_chunk",
+                  "value": {
+                    "doubleValue": 3.825
+                  }
+                },
+                {
+                  "key": "copilot_chat.server_request_id",
+                  "value": {
+                    "stringValue": "bd1af91e-ad02-47d8-b569-db2d5d11fe64"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning_tokens",
+                  "value": {
+                    "intValue": 320
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning.output_tokens",
+                  "value": {
+                    "intValue": 320
+                  }
+                },
+                {
+                  "key": "copilot_chat.copilot_usage_nano_aiu",
+                  "value": {
+                    "intValue": 1137630000
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "d36d20a685446c1839e4dcd00a8ae64c",
+              "spanId": "5f25954b57a3ca87",
+              "parentSpanId": "3c3879f4a2576394",
+              "name": "execute_tool read_file",
+              "kind": 1,
+              "startTimeUnixNano": "1784575947759000000",
+              "endTimeUnixNano": "1784575947984966800",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "read_file"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.type",
+                  "value": {
+                    "stringValue": "function"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_kNNIvTHtyxH0REEfihnYHvKd"
+                  }
+                },
+                {
+                  "key": "copilot_chat.session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "copilot_chat.chat_session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 769
+            },
+            {
+              "traceId": "d36d20a685446c1839e4dcd00a8ae64c",
+              "spanId": "2a053edcfd3a1231",
+              "parentSpanId": "3c3879f4a2576394",
+              "name": "execute_tool read_file",
+              "kind": 1,
+              "startTimeUnixNano": "1784575947760000000",
+              "endTimeUnixNano": "1784575947995446500",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "read_file"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.type",
+                  "value": {
+                    "stringValue": "function"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_kqlWROZvcjfalVPT35LzzEJ8"
+                  }
+                },
+                {
+                  "key": "copilot_chat.session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "copilot_chat.chat_session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 769
+            },
+            {
+              "traceId": "d36d20a685446c1839e4dcd00a8ae64c",
+              "spanId": "6d72bab635e900a6",
+              "parentSpanId": "3c3879f4a2576394",
+              "name": "execute_tool read_file",
+              "kind": 1,
+              "startTimeUnixNano": "1784575947761000000",
+              "endTimeUnixNano": "1784575947998186800",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "execute_tool"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.name",
+                  "value": {
+                    "stringValue": "read_file"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.type",
+                  "value": {
+                    "stringValue": "function"
+                  }
+                },
+                {
+                  "key": "gen_ai.tool.call.id",
+                  "value": {
+                    "stringValue": "call_pu4RWrxK7FQPc0cfAlhp6z2Y"
+                  }
+                },
+                {
+                  "key": "copilot_chat.session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "copilot_chat.chat_session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 1
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 769
+            },
+            {
+              "traceId": "e6f35a4caba50d392acebedd687f6bd2",
+              "spanId": "3bdbd7cb989e3e21",
+              "name": "chat gpt-4o-mini-2024-07-18",
+              "kind": 3,
+              "startTimeUnixNano": "1784575951800000000",
+              "endTimeUnixNano": "1784575952498369900",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini-2024-07-18"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.max_tokens",
+                  "value": {
+                    "intValue": 4096
+                  }
+                },
+                {
+                  "key": "gen_ai.request.temperature",
+                  "value": {
+                    "doubleValue": 0.1
+                  }
+                },
+                {
+                  "key": "gen_ai.request.top_p",
+                  "value": {
+                    "intValue": 1
+                  }
+                },
+                {
+                  "key": "copilot_chat.request.max_prompt_tokens",
+                  "value": {
+                    "intValue": 12285
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "copilotLanguageModelWrapper"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 1694
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 5
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "gpt-4o-mini-2024-07-18"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "621fb669-1097-4f03-ad52-17952ae304fb"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 1536
+                  }
+                },
+                {
+                  "key": "copilot_chat.time_to_first_token",
+                  "value": {
+                    "intValue": 695
+                  }
+                },
+                {
+                  "key": "gen_ai.request.stream",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.response.time_to_first_chunk",
+                  "value": {
+                    "doubleValue": 0.695
+                  }
+                },
+                {
+                  "key": "copilot_chat.server_request_id",
+                  "value": {
+                    "stringValue": "621fb669-1097-4f03-ad52-17952ae304fb"
+                  }
+                },
+                {
+                  "key": "copilot_chat.copilot_usage_nano_aiu",
+                  "value": {
+                    "intValue": 0
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            },
+            {
+              "traceId": "d36d20a685446c1839e4dcd00a8ae64c",
+              "spanId": "6e07e6457b14857a",
+              "parentSpanId": "3c3879f4a2576394",
+              "name": "chat mai-code-1-flash",
+              "kind": 3,
+              "startTimeUnixNano": "1784575948015000000",
+              "endTimeUnixNano": "1784575952630906700",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "mai-code-1-flash"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.max_tokens",
+                  "value": {
+                    "intValue": 128000
+                  }
+                },
+                {
+                  "key": "copilot_chat.request.max_prompt_tokens",
+                  "value": {
+                    "intValue": 127997
+                  }
+                },
+                {
+                  "key": "copilot_chat.session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "copilot_chat.chat_session_id",
+                  "value": {
+                    "stringValue": "bf40277b-cecd-4698-9d62-3b59f815e72c"
+                  }
+                },
+                {
+                  "key": "gen_ai.agent.name",
+                  "value": {
+                    "stringValue": "panel/editAgent"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": 26914
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": 372
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "mai-code-1-flash"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "bd1af91e-ad02-47d8-b569-db2d5d11fe64"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.cache_read.input_tokens",
+                  "value": {
+                    "intValue": 23680
+                  }
+                },
+                {
+                  "key": "copilot_chat.time_to_first_token",
+                  "value": {
+                    "intValue": 3730
+                  }
+                },
+                {
+                  "key": "gen_ai.request.stream",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "gen_ai.response.time_to_first_chunk",
+                  "value": {
+                    "doubleValue": 3.766
+                  }
+                },
+                {
+                  "key": "copilot_chat.server_request_id",
+                  "value": {
+                    "stringValue": "bd1af91e-ad02-47d8-b569-db2d5d11fe64"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning_tokens",
+                  "value": {
+                    "intValue": 256
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.reasoning.output_tokens",
+                  "value": {
+                    "intValue": 256
+                  }
+                },
+                {
+                  "key": "copilot_chat.copilot_usage_nano_aiu",
+                  "value": {
+                    "intValue": 587550000
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "status": {
+                "code": 0
+              },
+              "links": [],
+              "droppedLinksCount": 0,
+              "flags": 257
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

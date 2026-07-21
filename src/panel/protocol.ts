@@ -44,6 +44,8 @@ export type HostToWebviewMessage =
       workspacePath?: string;
       conversationsByProvider: Partial<Record<ProviderId, ConversationListItem[]>>;
       selected?: ConversationDetailPayload;
+      /** Storage Footer lines (Copilot OTel status + storage guarantee/retention). */
+      storageFooter?: string[];
     }
   | { type: 'conversationDetail'; detail: ConversationDetailPayload }
   // On-demand Call detail (plans/2026-07/07/call-details OP-101): the host

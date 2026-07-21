@@ -13,6 +13,8 @@ import {
 } from '../../domain/types';
 import { PricingService } from '../../pricing/pricingService';
 import { buildToolCallDetail, unavailableDetail } from '../callDetail';
+import { applyOtelEnrichment } from './otel/enrich';
+import { readCallsForConversation } from './otel/storage';
 
 /**
  * VS Code's chatSessions/*.jsonl is an append log of patch operations onto
@@ -102,6 +104,8 @@ interface RawCopilotRequest {
       resolvedModel?: string;
       promptTokens?: number;
       outputTokens?: number;
+      /** Provider response id; equals OTel copilot_chat.server_request_id (join key). */
+      responseId?: string;
       toolCallRounds?: RawToolCallRound[];
       toolCallResults?: Record<string, RawToolCallResultContent>;
     };
@@ -360,13 +364,26 @@ export async function parseCopilotSession(
   filePath: string,
   sessionId: string,
   workspacePath: string,
-  pricing: PricingService
+  pricing: PricingService,
+  otelBaseDir?: string
 ): Promise<ConversationSummary> {
   const doc = await reconstructDocument(filePath);
   const rawRequests = doc.requests ?? [];
   const contextWindow = contextWindowFromDocument(doc);
 
-  const requests = rawRequests.map((raw, index) => toPromptRequest(raw, index, pricing, contextWindow));
+  let requests = rawRequests.map((raw, index) => toPromptRequest(raw, index, pricing, contextWindow));
+
+  // Optional Copilot OTel enrichment: replace skeletal round marks with real
+  // per-LLM-call usage when a stored trace matches this conversation/request
+  // (plans/2026-07/20/copilot-otel). Absent OTel data leaves requests untouched.
+  if (otelBaseDir) {
+    const otelCalls = readCallsForConversation(otelBaseDir, sessionId);
+    if (otelCalls.length > 0) {
+      const responseIdByIndex = rawRequests.map((raw) => raw.result?.metadata?.responseId);
+      requests = applyOtelEnrichment(requests, responseIdByIndex, otelCalls, pricing);
+    }
+  }
+
   const totalUsage = requests.reduce((acc, r) => addUsage(acc, r.usage), { ...EMPTY_USAGE });
   const totalCostUsd = requests.reduce((sum, r) => sum + (r.cost.usd ?? 0), 0);
 

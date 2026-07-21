@@ -19,6 +19,7 @@ import {
   withinRollingWindow
 } from '../domain/costMap';
 import { ConversationDetailPayload, CostMapPeriodPayload, HostToWebviewMessage, WebviewToHostMessage } from './protocol';
+import { CopilotOtelService } from '../providers/copilot/otel/service';
 
 const PROVIDERS: ProviderId[] = ['claude', 'codex', 'copilot'];
 
@@ -28,7 +29,11 @@ export class PanelController implements vscode.Disposable {
   private workspacePath: string | undefined;
   private selectedConversation: { provider: ProviderId; id: string } | undefined;
 
-  constructor(private readonly context: vscode.ExtensionContext, private readonly pricing: PricingService) {}
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly pricing: PricingService,
+    private readonly otel: CopilotOtelService
+  ) {}
 
   dispose(): void {
     this.panel?.dispose();
@@ -193,7 +198,8 @@ export class PanelController implements vscode.Disposable {
       providers: PROVIDERS,
       workspacePath,
       conversationsByProvider,
-      selected
+      selected,
+      storageFooter: this.otel.footerLines()
     });
   }
 
@@ -248,7 +254,7 @@ export class PanelController implements vscode.Disposable {
       const filePath = getCopilotSessionFilePath(id);
       if (!filePath) return undefined;
 
-      const summary = await parseCopilotSession(filePath, id, this.workspacePath, this.pricing);
+      const summary = await parseCopilotSession(filePath, id, this.workspacePath, this.pricing, this.otel.storageDir);
       return {
         provider: 'copilot',
         id,

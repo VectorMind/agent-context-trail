@@ -30,14 +30,18 @@ them to look equivalent when they are not.
   exposes.
 - **GitHub Copilot** reaches real input/output tokens, resolved model, and an
   `estimated` USD cost from its local `chatSessions` log alone - zero
-  configuration, no opt-in setting or export step. Its one durable gap is
-  cache-read/cache-write tokens, which that log does not record at all
-  (`plans/2026-07/06/copilot-parity`).
+  configuration, no opt-in setting or export step. That zero-configuration log
+  records neither per-LLM-call usage nor cache tokens. Copilot's opt-in
+  OpenTelemetry export (OTLP/HTTP to a loopback endpoint the extension receives
+  on, user-enabled, never written by the extension) adds real per-call context,
+  including cache-read tokens. Cache-write tokens stay unavailable regardless,
+  because Copilot does not emit them on any surface
+  (`plans/2026-07/06/copilot-parity`, `plans/2026-07/20/copilot-otel`).
 
 Binding rule: never fabricate missing data. If a provider's local data does
-not expose a field, such as Copilot cache tokens, the extension must present
-that field as unavailable. It must not show zero, and it must not omit the
-field in a way that could be misread as zero.
+not expose a field, such as Copilot cache-write tokens, the extension must
+present that field as unavailable. It must not show zero, and it must not omit
+the field in a way that could be misread as zero.
 
 A provider tab with no supported conversations must say so explicitly, for
 example "support is not implemented yet." It must never render as a silently

@@ -2,6 +2,7 @@
 .tmp/**
 plans/**
 specification/**
+scripts/**
 .agents/**
 .git/**
 src/**

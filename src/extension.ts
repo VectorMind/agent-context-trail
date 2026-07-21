@@ -7,6 +7,7 @@ import { parseCodexSession } from './providers/codex/parser';
 import { getCopilotSessionFilePath, listCopilotConversations } from './providers/copilot/discover';
 import { parseCopilotSession } from './providers/copilot/parser';
 import { PricingService } from './pricing/pricingService';
+import { CopilotOtelService } from './providers/copilot/otel/service';
 import { formatUsd } from './shared/format';
 import { StatusBarController } from './status/statusBar';
 import { PanelController } from './panel/panelController';
@@ -17,6 +18,7 @@ let outputChannel: vscode.OutputChannel;
 let statusBar: StatusBarController;
 let panelController: PanelController;
 let pricing: PricingService;
+let otelService: CopilotOtelService;
 let currentSummary: ConversationSummary | undefined;
 
 function getWorkspacePath(): string | undefined {
@@ -109,7 +111,7 @@ async function listAndLoadCopilotSummary(
   if (!latest) return undefined;
   const filePath = getCopilotSessionFilePath(latest.id);
   if (!filePath) return undefined;
-  return parseCopilotSession(filePath, latest.id, workspacePath, pricing);
+  return parseCopilotSession(filePath, latest.id, workspacePath, pricing, otelService.storageDir);
 }
 
 function showSummary(): void {
@@ -148,9 +150,20 @@ export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('Agent Context Trail');
   pricing = new PricingService(context.extensionPath);
   statusBar = new StatusBarController();
-  panelController = new PanelController(context, pricing);
+  otelService = new CopilotOtelService(
+    context.globalStorageUri.fsPath,
+    (message) => outputChannel.appendLine(message),
+    () => void refresh()
+  );
+  panelController = new PanelController(context, pricing, otelService);
 
-  context.subscriptions.push(outputChannel, statusBar, panelController);
+  context.subscriptions.push(outputChannel, statusBar, panelController, {
+    dispose: () => void otelService.stop()
+  });
+
+  // Start the loopback OTel receiver when the user has opted in and pointed
+  // Copilot at a loopback endpoint; otherwise it stays dormant (no listener).
+  void otelService.start();
 
   context.subscriptions.push(
     vscode.commands.registerCommand('agentContextTrail.refresh', () => refresh()),

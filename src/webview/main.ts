@@ -131,6 +131,8 @@ interface State {
   costMapModelFilter?: string;
   /** Period-mode point activation on another conversation: prompt to select once its detail arrives. */
   pendingPromptSelect?: { conversationId: string; promptIndex: number };
+  /** Storage Footer lines supplied host-side (Copilot OTel status + storage guarantee). */
+  storageFooter?: string[];
 }
 
 /**
@@ -2875,7 +2877,14 @@ function applyDetail(detail: ConversationDetailPayload | undefined, preserveSele
 function renderStorageFooter(container: HTMLElement): void {
   const footer = document.createElement('div');
   footer.className = 'storage-footer';
-  footer.textContent = 'No local data stored — Agent Context Trail reads provider logs directly and writes nothing of its own to disk.';
+  const lines = state.storageFooter?.length
+    ? state.storageFooter
+    : ['No local data stored — Agent Context Trail reads provider logs directly and writes nothing of its own to disk.'];
+  for (const line of lines) {
+    const row = document.createElement('div');
+    row.textContent = line;
+    footer.appendChild(row);
+  }
   container.appendChild(footer);
 }
 
@@ -2941,6 +2950,7 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
     state.providers = message.providers;
     state.workspacePath = message.workspacePath;
     state.conversationsByProvider = message.conversationsByProvider;
+    state.storageFooter = message.storageFooter;
     for (const [key, value] of costMapPeriodCache) {
       if (value !== 'loading') costMapPeriodStale.add(key);
     }

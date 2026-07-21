@@ -1,169 +1,114 @@
 /**
- * Copilot OTel enrichment — configuration detection (plan Phase 2).
+ * Copilot OTel enrichment — configuration + state detection (plan_v2 Phase 2/7).
  *
- * Copilot Chat can emit one `chat` span per LLM call through a supported,
- * opt-in OpenTelemetry file exporter. This module classifies the *resolved*
- * Copilot OTel configuration into one honest state so the rest of the feature
- * (and the UX) can either enrich from the file or explain, without ever
- * writing a `github.copilot.*` setting on the user's behalf (plan goal #3).
+ * Classifies the *resolved* `github.copilot.chat.otel.*` settings into one
+ * honest state. The v2 design consumes the OTLP/HTTP exporter pointed at a
+ * loopback endpoint the extension hosts; the extension only reads settings and
+ * never writes a `github.copilot.*` value (surfaces-and-privacy.md).
  *
- * This file is intentionally free of any `vscode` / `fs` import so it stays a
- * pure, fully unit-tested classifier. The extension-host adapter in
- * `detect.ts` reads the resolved settings and probes the outfile, then hands
- * the raw facts here.
- *
- * Settings, per the source contract in plan.md:
- *   github.copilot.chat.otel.enabled        (boolean)
- *   github.copilot.chat.otel.exporterType   ("file" for this integration)
- *   github.copilot.chat.otel.outfile        (path)
- *   github.copilot.chat.otel.captureContent (must stay false — privacy)
+ * Pure and fully unit-tested; the `vscode`/`fs` adapter lives in `detect.ts`.
  */
 
 const DOCS_URL = 'https://code.visualstudio.com/docs/agents/guides/monitoring-agents';
-const SETTINGS_DOCS_URL =
-  'https://code.visualstudio.com/docs/agents/reference/ai-settings#_observability-settings';
 
 /** The exporter type this integration consumes. */
-export const REQUIRED_EXPORTER_TYPE = 'file';
+export const REQUIRED_EXPORTER_TYPE = 'otlp-http';
 
-/**
- * Raw resolved configuration plus an outfile filesystem probe. Every field is
- * optional so the adapter can pass whatever VS Code actually resolved; absent
- * means "not set", never a fabricated default.
- */
 export interface CopilotOtelProbe {
-  /** Effective resolved value of `...otel.enabled`. */
   enabled?: boolean;
-  /**
-   * Policy-forced value of `...otel.enabled` when VS Code exposes one via
-   * `inspect().policyValue`. Enterprise policy takes precedence over user and
-   * workspace settings (plan "Enterprise Constraints"). Best-effort: OP-005
-   * tracks whether resolved settings reliably distinguish policy-off from an
-   * ordinary user-off, so we only claim "managed" when a policy value is
-   * actually present and false.
-   */
+  /** policyValue of `enabled` when VS Code exposes one (enterprise policy). */
   enabledByPolicy?: boolean;
-  /** Effective resolved value of `...otel.exporterType`. */
   exporterType?: string;
-  /** Effective resolved value of `...otel.outfile`. */
-  outfile?: string;
-  /** Effective resolved value of `...otel.captureContent`. */
+  /** github.copilot.chat.otel.otlpEndpoint, e.g. "http://127.0.0.1:9876". */
+  otlpEndpoint?: string;
   captureContent?: boolean;
-  /** Outfile probe results, filled by the host adapter. */
-  fileExists?: boolean;
-  /** False when the outfile exists but could not be stat/opened. */
-  fileReadable?: boolean;
-  fileSizeBytes?: number;
 }
 
-export type CopilotOtelStatusKind =
-  /** `...otel.enabled` is not true and no policy forces it off. */
+export type CopilotOtelConfigKind =
+  /** enabled is not true and no policy forces it off. */
   | 'disabled'
-  /** Enterprise policy forces OTel off; an honest admin-owned state, not an error. */
+  /** enterprise policy forces OTel off — honest admin-owned state, not an error. */
   | 'managed-disabled'
-  /** Enabled, but the exporter is not the `file` exporter this integration reads. */
+  /** enabled, but the exporter is not otlp-http. */
   | 'wrong-exporter'
-  /** File exporter selected, but no `outfile` path is configured. */
-  | 'missing-outfile'
-  /** Outfile configured, but the file does not exist or cannot be read. */
-  | 'unreadable'
-  /** Outfile exists and is readable, but empty (no spans exported yet). */
-  | 'empty'
-  /** File exporter with a readable, non-empty outfile — enrichment can proceed. */
-  | 'usable';
+  /** otlp-http selected, but no endpoint is configured. */
+  | 'endpoint-missing'
+  /** otlp-http endpoint points somewhere other than loopback — left untouched. */
+  | 'endpoint-elsewhere'
+  /** otlp-http + a loopback endpoint the extension can host a receiver on. */
+  | 'loopback';
 
-export interface CopilotOtelStatus {
-  kind: CopilotOtelStatusKind;
-  /** True only for `usable`: the outfile is worth reading. */
-  ready: boolean;
-  /** Absolute outfile path when one is configured, for UX and the reader. */
-  outfile?: string;
-  fileSizeBytes?: number;
+export interface CopilotOtelConfig {
+  kind: CopilotOtelConfigKind;
+  endpoint?: string;
+  /** Loopback host/port parsed from the endpoint (only for kind 'loopback'). */
+  host?: string;
+  port?: number;
+  /** True when the `enabled` value is policy-forced (managed). */
+  managed: boolean;
   /**
-   * True when `...otel.captureContent` resolved to true. This integration only
-   * needs metadata; content capture would persist prompts/code/tool payloads
-   * into the outfile, so the UX must warn even when the state is otherwise
-   * usable (plan goal #4).
+   * True when captureContent resolved to true. Content capture would put
+   * prompts/code/tool payloads into the exported spans; the extension's
+   * allowlist drops them regardless, but the UX still warns.
    */
   contentCaptureEnabled: boolean;
-  /** One-line, user-facing explanation of the state. */
   message: string;
-  /** Doc link the UX can offer; never an automatic enable action. */
   docsUrl: string;
 }
 
-function base(kind: CopilotOtelStatusKind, probe: CopilotOtelProbe, message: string): CopilotOtelStatus {
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+interface ParsedEndpoint {
+  host: string;
+  port?: number;
+  loopback: boolean;
+}
+
+export function parseEndpoint(endpoint: string | undefined): ParsedEndpoint | undefined {
+  if (!endpoint) return undefined;
+  try {
+    const url = new URL(endpoint);
+    const host = url.hostname;
+    const port = url.port ? Number(url.port) : undefined;
+    return { host, port, loopback: LOOPBACK_HOSTS.has(host) };
+  } catch {
+    return undefined;
+  }
+}
+
+function make(kind: CopilotOtelConfigKind, probe: CopilotOtelProbe, message: string, extra?: Partial<CopilotOtelConfig>): CopilotOtelConfig {
   return {
     kind,
-    ready: kind === 'usable',
-    outfile: probe.outfile,
-    fileSizeBytes: probe.fileSizeBytes,
+    managed: probe.enabledByPolicy !== undefined,
     contentCaptureEnabled: probe.captureContent === true,
+    endpoint: probe.otlpEndpoint,
     message,
-    docsUrl: kind === 'wrong-exporter' || kind === 'missing-outfile' ? SETTINGS_DOCS_URL : DOCS_URL
+    docsUrl: DOCS_URL,
+    ...extra
   };
 }
 
-/**
- * Classify the resolved Copilot OTel configuration into one honest state.
- * Never fabricates a default: an unset `enabled` is treated as off, an unset
- * `exporterType` is treated as "not the file exporter" (the integration
- * requires an explicit `file` selection, per the source contract).
- */
-export function classifyCopilotOtel(probe: CopilotOtelProbe): CopilotOtelStatus {
-  // Enterprise policy precedence first (plan "Enterprise Constraints").
+/** Classify resolved Copilot OTel configuration. Fabricates no defaults. */
+export function classifyCopilotOtel(probe: CopilotOtelProbe): CopilotOtelConfig {
   if (probe.enabledByPolicy === false) {
-    return base(
-      'managed-disabled',
-      probe,
-      'Copilot OpenTelemetry is turned off by an administrator policy. Per-call context enrichment is unavailable and the extension will not override the policy.'
-    );
+    return make('managed-disabled', probe, 'Copilot OpenTelemetry is turned off by an administrator policy; per-call enrichment is unavailable and the extension will not override it.');
   }
-
   if (probe.enabled !== true) {
-    return base(
-      'disabled',
-      probe,
-      'Copilot OpenTelemetry is off. Enable the opt-in file exporter to add per-call context to the Copilot timeline; the extension never changes this setting for you.'
-    );
+    return make('disabled', probe, 'Copilot OpenTelemetry is off. Enable the opt-in otlp-http exporter pointed at a loopback endpoint to add per-call context; the extension never changes this setting for you.');
   }
-
   if (probe.exporterType !== REQUIRED_EXPORTER_TYPE) {
     const current = probe.exporterType ? `"${probe.exporterType}"` : 'unset';
-    return base(
-      'wrong-exporter',
-      probe,
-      `Copilot OpenTelemetry is on, but the exporter is ${current}. This integration reads the "file" exporter; set github.copilot.chat.otel.exporterType to "file".`
-    );
+    return make('wrong-exporter', probe, `Copilot OpenTelemetry is on, but the exporter is ${current}. This integration reads the "otlp-http" exporter.`);
   }
-
-  if (!probe.outfile) {
-    return base(
-      'missing-outfile',
-      probe,
-      'The Copilot OpenTelemetry file exporter is selected but github.copilot.chat.otel.outfile is not set. Choose a file path to export spans to.'
-    );
+  const parsed = parseEndpoint(probe.otlpEndpoint);
+  if (!parsed) {
+    return make('endpoint-missing', probe, 'The Copilot otlp-http exporter is selected but github.copilot.chat.otel.otlpEndpoint is not a usable URL.');
   }
-
-  if (probe.fileExists !== true || probe.fileReadable === false) {
-    return base(
-      'unreadable',
-      probe,
-      `The configured Copilot OpenTelemetry outfile could not be read (${probe.outfile}). It may not exist yet — start a Copilot chat with the exporter enabled to create it.`
-    );
+  if (!parsed.loopback) {
+    return make('endpoint-elsewhere', probe, `Copilot OpenTelemetry is exporting to ${parsed.host}, not a loopback endpoint. The extension leaves that configuration untouched and does not enrich from it.`);
   }
-
-  if ((probe.fileSizeBytes ?? 0) <= 0) {
-    return base(
-      'empty',
-      probe,
-      'The Copilot OpenTelemetry outfile exists but is empty. No spans have been exported yet; run a Copilot chat request to populate it.'
-    );
-  }
-
-  return base(
-    'usable',
-    probe,
-    'Copilot OpenTelemetry file export is available for per-call context enrichment.'
-  );
+  return make('loopback', probe, 'Copilot OpenTelemetry is exporting to a loopback endpoint the extension can receive on.', {
+    host: parsed.host,
+    port: parsed.port
+  });
 }
