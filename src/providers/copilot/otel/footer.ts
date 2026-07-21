@@ -50,14 +50,11 @@ export function copilotOtelFooterLine(config: CopilotOtelConfig, runtime: Copilo
 }
 
 /**
- * Both footer lines: the OTel status line, then the storage guarantee (when the
- * extension has persisted nothing) or the retention note (when it has).
+ * The panel's Copilot status footer: just the compact "Copilot detail: …"
+ * troubleshooting line. The retention/privacy explanation it used to carry now
+ * lives in the README — the panel keeps only the live activation state and
+ * store size, and the webview shows it on the Copilot tab alone.
  */
 export function buildStorageFooterLines(config: CopilotOtelConfig, runtime: CopilotOtelRuntime): string[] {
-  const otel = copilotOtelFooterLine(config, runtime);
-  const persisted = runtime.storageBytes > 0 && !runtime.storageError;
-  const second = persisted
-    ? 'Local usage history is the extension’s own Copilot OpenTelemetry store, retained for the current and two preceding calendar months. Provider logs are read directly and never copied.'
-    : 'No local data stored — Agent Context Trail reads provider logs directly and writes nothing of its own to disk.';
-  return [otel, second];
+  return [copilotOtelFooterLine(config, runtime)];
 }

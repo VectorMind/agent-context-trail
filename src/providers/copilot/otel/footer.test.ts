@@ -63,9 +63,9 @@ test('managed loopback activation is distinguished from user activation', () => 
   );
 });
 
-test('footer sub-line reflects whether anything is persisted', () => {
+test('footer carries only the status line', () => {
   const none = buildStorageFooterLines(loopback, rt());
-  assert.match(none[1], /No local data stored/);
+  assert.deepEqual(none, ['Copilot detail: active · no compatible spans received']);
   const some = buildStorageFooterLines(loopback, rt({ storageBytes: 2048 }));
-  assert.match(some[1], /retained for the current and two preceding/);
+  assert.deepEqual(some, ['Copilot detail: active · local usage history 2.0 KB']);
 });

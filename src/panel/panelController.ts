@@ -702,6 +702,7 @@ export class PanelController implements vscode.Disposable {
   .chart-caption { font-size: 9px; letter-spacing: 0.08em; }
   .chart-tick { font-size: 10px; }
   .chart-tick.selected { font-weight: 600; }
+  .chart-iso-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
   .chart-value-label { font-size: 10px; }
 
   .bar-group { cursor: pointer; }
@@ -750,6 +751,66 @@ export class PanelController implements vscode.Disposable {
     height: 10px;
     border-radius: 5px;
   }
+
+  /* cost map: chart beside a persistent detail panel (wraps below when narrow) */
+  .costmap-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .costmap-body .chart-scroll { flex: 1 1 340px; min-width: 0; }
+  .costmap-detail {
+    flex: 1 1 200px;
+    align-self: stretch;
+    min-width: 190px;
+    max-width: 300px;
+    padding: 10px 12px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    background: var(--vscode-editor-background);
+    font-size: 11px;
+  }
+  .costmap-detail-empty { color: var(--vscode-descriptionForeground); line-height: 1.5; }
+  .costmap-detail-head { display: flex; align-items: baseline; gap: 8px; }
+  .costmap-detail-title { font-weight: 600; font-size: 12px; }
+  .costmap-detail-pin {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+  }
+  .costmap-detail-model { color: var(--vscode-descriptionForeground); font-size: 10px; margin-top: 2px; }
+  .costmap-detail-heroes { display: flex; gap: 8px; margin: 10px 0; }
+  .costmap-detail-hero {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--vscode-panel-border);
+    background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  }
+  .costmap-detail-hero-value {
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    color: var(--vscode-foreground);
+  }
+  .costmap-detail-hero-label { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
+  .costmap-detail-table {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 5px 8px;
+    align-items: center;
+  }
+  .costmap-detail-row { display: contents; }
+  .costmap-detail-key { width: 8px; height: 8px; border-radius: 2px; }
+  .costmap-detail-label { color: var(--vscode-descriptionForeground); }
+  .costmap-detail-value { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 
   .detail-card {
     border: 1px solid var(--vscode-panel-border);

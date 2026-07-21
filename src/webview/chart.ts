@@ -1583,46 +1583,127 @@ function costMapPointLabel(point: CostMapPoint, overlap: number, showConversatio
   );
 }
 
-function fillCostMapTooltip(tooltip: HTMLElement, point: CostMapPoint, overlap: number, color: string, showConversation: boolean): void {
-  tooltip.textContent = '';
-  const header = document.createElement('div');
-  header.className = 'tooltip-header';
-  header.textContent = `Prompt #${point.promptIndex + 1}`;
+/** Resting state of the side panel: nothing hovered and nothing pinned yet. */
+function costMapDetailPlaceholder(panel: HTMLElement): void {
+  panel.textContent = '';
+  panel.classList.add('is-empty');
+  const msg = document.createElement('div');
+  msg.className = 'costmap-detail-empty';
+  msg.textContent = 'Hover a bubble to preview it, or click one to pin its details here.';
+  panel.appendChild(msg);
+}
+
+/** A headline stat block: big value over a muted label; `valueColor` tints the value (else foreground). */
+function costMapHero(value: string, label: string, valueColor: string | undefined): HTMLElement {
+  const hero = document.createElement('div');
+  hero.className = 'costmap-detail-hero';
+  const valueEl = document.createElement('div');
+  valueEl.className = 'costmap-detail-hero-value';
+  if (valueColor) valueEl.style.color = valueColor;
+  valueEl.textContent = value;
+  const labelEl = document.createElement('div');
+  labelEl.className = 'costmap-detail-hero-label';
+  labelEl.textContent = label;
+  hero.append(valueEl, labelEl);
+  return hero;
+}
+
+/** One [swatch · label · value] line; `display:contents` lets it inherit the panel's 3-col grid. */
+function costMapDetailRow(keyColor: string | undefined, label: string, value: string): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'costmap-detail-row';
+  const key = document.createElement('span');
+  key.className = 'costmap-detail-key';
+  key.style.background = keyColor ?? 'transparent';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'costmap-detail-label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('span');
+  valueEl.className = 'costmap-detail-value';
+  valueEl.textContent = value;
+  row.append(key, labelEl, valueEl);
+  return row;
+}
+
+/**
+ * The persistent side panel for one prompt: cost leads as a prominent "hero"
+ * value (the headline of this map), then everything else in a plain aligned
+ * table. `pinned` flags the currently selected prompt so a hover-preview reads
+ * differently from a click-pinned selection.
+ */
+function fillCostMapDetail(
+  panel: HTMLElement,
+  point: CostMapPoint,
+  overlap: number,
+  color: string,
+  showConversation: boolean,
+  pinned: boolean
+): void {
+  panel.textContent = '';
+  panel.classList.remove('is-empty');
+
+  const head = document.createElement('div');
+  head.className = 'costmap-detail-head';
+  const title = document.createElement('span');
+  title.className = 'costmap-detail-title';
+  title.textContent = `Prompt #${point.promptIndex + 1}`;
+  head.appendChild(title);
+  if (pinned) {
+    const badge = document.createElement('span');
+    badge.className = 'costmap-detail-pin';
+    badge.textContent = 'pinned';
+    head.appendChild(badge);
+  }
+  panel.appendChild(head);
+
   const models = point.modelsUsed?.length ? point.modelsUsed : point.model ? [point.model] : [];
   if (models.length > 0) {
-    const model = document.createElement('span');
-    model.className = 'tooltip-model';
-    model.textContent = models.map(shortModelName).join(' → ');
-    header.appendChild(model);
+    const modelEl = document.createElement('div');
+    modelEl.className = 'costmap-detail-model';
+    modelEl.textContent = models.map(shortModelName).join(' → ');
+    panel.appendChild(modelEl);
   }
-  tooltip.appendChild(header);
   if (showConversation && point.conversationTitle) {
-    tooltip.appendChild(tooltipRow(undefined, false, 'Conversation', point.conversationTitle));
+    const conv = document.createElement('div');
+    conv.className = 'costmap-detail-model';
+    conv.textContent = point.conversationTitle;
+    panel.appendChild(conv);
   }
 
-  tooltip.appendChild(tooltipRow(undefined, false, 'Start context', `${formatTokens(point.startContext)} tok`));
-  tooltip.appendChild(tooltipRow(undefined, false, 'End context', `${formatTokens(point.endContext)} tok`));
-  tooltip.appendChild(
-    tooltipRow(
+  // two headline stats side by side, set apart from the table so they read
+  // first: cost (encoded as bubble AREA — shown neutral so it doesn't borrow
+  // the LLM-count gradient's hue) and LLM calls (encoded as bubble COLOR —
+  // shown in that same per-point gradient color).
+  const heroes = document.createElement('div');
+  heroes.className = 'costmap-detail-heroes';
+  heroes.appendChild(costMapHero(formatUsd(point.costUsd), `Cost (${point.costSource})`, undefined));
+  heroes.appendChild(
+    costMapHero(String(point.iterations), point.iterations === 1 ? 'LLM call' : 'LLM calls', color)
+  );
+  panel.appendChild(heroes);
+
+  // everything else, in a plain aligned table
+  const table = document.createElement('div');
+  table.className = 'costmap-detail-table';
+  table.appendChild(costMapDetailRow(undefined, 'Start context', `${formatTokens(point.startContext)} tok`));
+  table.appendChild(costMapDetailRow(undefined, 'End context', `${formatTokens(point.endContext)} tok`));
+  table.appendChild(
+    costMapDetailRow(
       undefined,
-      false,
       'Context delta',
       `${point.contextDelta >= 0 ? '+' : '−'}${formatTokens(Math.abs(point.contextDelta))} tok`
     )
   );
-  tooltip.appendChild(tooltipRow(color, false, 'LLM calls', String(point.iterations)));
-  tooltip.appendChild(tooltipRow(TOOL_CALLS_COLOR, false, 'Tool calls', String(point.toolCalls)));
-  tooltip.appendChild(
-    tooltipRow(undefined, false, 'Context work', `${formatTokens(point.contextWork)} tok`)
-  );
-  tooltip.appendChild(tooltipRow(COST_COLOR, false, `Cost (${point.costSource})`, formatUsd(point.costUsd)));
+  table.appendChild(costMapDetailRow(TOOL_CALLS_COLOR, 'Tool calls', String(point.toolCalls)));
+  table.appendChild(costMapDetailRow(undefined, 'Context work', `${formatTokens(point.contextWork)} tok`));
   for (const series of TOKEN_SERIES) {
     const value = point.usage[series.key];
-    if (value > 0) tooltip.appendChild(tooltipRow(series.color, false, series.label, formatTokens(value)));
+    if (value > 0) table.appendChild(costMapDetailRow(series.color, series.label, formatTokens(value)));
   }
   if (overlap > 1) {
-    tooltip.appendChild(tooltipRow(undefined, false, 'Overlap', `${overlap} prompts at this position`));
+    table.appendChild(costMapDetailRow(undefined, 'Overlap', `${overlap} prompts at this position`));
   }
+  panel.appendChild(table);
 }
 
 /**
@@ -1711,14 +1792,20 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
   wrapper.className = 'chart-wrapper';
   wrapper.appendChild(costMapLegend(maxCost, scale, lowRgb, highRgb));
 
+  // Chart on the left, a persistent detail panel on the right (no floating
+  // popover): hover previews a bubble, click pins it there until another is
+  // hovered/clicked. Wraps the panel below the chart when the section is narrow.
+  const body = document.createElement('div');
+  body.className = 'costmap-body';
+  wrapper.appendChild(body);
+
   const scroll = document.createElement('div');
   scroll.className = 'chart-scroll';
-  wrapper.appendChild(scroll);
+  body.appendChild(scroll);
 
-  const tooltip = document.createElement('div');
-  tooltip.className = 'chart-tooltip';
-  tooltip.style.display = 'none';
-  wrapper.appendChild(tooltip);
+  const detail = document.createElement('div');
+  detail.className = 'costmap-detail';
+  body.appendChild(detail);
 
   // Both axes carry the same unit (context tokens), so they share one scale:
   // 0 → the nice ceiling of the largest start/end value on screen. The
@@ -1787,7 +1874,10 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
   });
   diagLabel.textContent = 'end = start';
   guideLayer.appendChild(diagLabel);
-  for (const delta of isoGrowthDeltas(points)) {
+  // parallels span the whole plotted range (ceiling = scaleMax), not just the
+  // deltas data points reach; drawn stronger than the faint gridlines but still
+  // below the bubble layer appended later.
+  for (const delta of isoGrowthDeltas(points, 3, scaleMax)) {
     if (delta >= scaleMax) continue;
     guideLayer.appendChild(
       svgEl('line', {
@@ -1795,15 +1885,16 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
         y1: yFor(delta),
         x2: xFor(scaleMax - delta),
         y2: yFor(scaleMax),
-        stroke: GRID,
+        stroke: TEXT_MUTED,
+        'stroke-opacity': 0.55,
         'stroke-width': 1,
-        'stroke-dasharray': '2 4'
+        'stroke-dasharray': '4 4'
       })
     );
     const label = svgEl('text', {
       x: xFor(0) + 4,
       y: yFor(delta) - 4,
-      class: 'chart-tick',
+      class: 'chart-iso-label',
       fill: TEXT_MUTED
     });
     label.textContent = `+${formatTokensCompact(delta)}`;
@@ -1876,22 +1967,17 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
     );
   }
 
-  // ---- tooltip plumbing ----
-  const positionTooltip = (clientX: number, clientY: number): void => {
-    tooltip.style.display = 'block';
-    const rect = wrapper.getBoundingClientRect();
-    let x = clientX - rect.left + 14;
-    let y = clientY - rect.top - 10;
-    if (x + tooltip.offsetWidth > rect.width - 4) x = clientX - rect.left - tooltip.offsetWidth - 14;
-    if (x < 4) x = 4;
-    if (y + tooltip.offsetHeight > rect.height - 4) y = rect.height - tooltip.offsetHeight - 4;
-    if (y < 4) y = 4;
-    tooltip.style.left = `${x}px`;
-    tooltip.style.top = `${y}px`;
+  // ---- side detail panel: preview on hover, pinned selection otherwise ----
+  // With no hover, the panel shows the pinned (selected) prompt if there is
+  // one, else an invitation. Leaving a bubble reverts to that resting state.
+  const showResting = (): void => {
+    if (selectedPlaced) {
+      fillCostMapDetail(detail, selectedPlaced.point, selectedPlaced.overlap, colorFor(selectedPlaced.point), showConversation, true);
+    } else {
+      costMapDetailPlaceholder(detail);
+    }
   };
-  const hideTooltip = (): void => {
-    tooltip.style.display = 'none';
-  };
+  showResting();
 
   // ---- one focusable hit target per prompt, in prompt order (DD-013) ----
   for (const b of placed) {
@@ -1906,6 +1992,8 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
     });
     group.appendChild(hit);
 
+    const preview = (): void =>
+      fillCostMapDetail(detail, b.point, b.overlap, colorFor(b.point), showConversation, b === selectedPlaced);
     const select = (): void => onSelect(b.point);
     group.addEventListener('click', select);
     group.addEventListener('keydown', (ev: KeyboardEvent) => {
@@ -1914,17 +2002,10 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
         select();
       }
     });
-    group.addEventListener('pointermove', (ev: PointerEvent) => {
-      fillCostMapTooltip(tooltip, b.point, b.overlap, colorFor(b.point), showConversation);
-      positionTooltip(ev.clientX, ev.clientY);
-    });
-    group.addEventListener('pointerleave', hideTooltip);
-    group.addEventListener('focus', () => {
-      fillCostMapTooltip(tooltip, b.point, b.overlap, colorFor(b.point), showConversation);
-      const hitRect = hit.getBoundingClientRect();
-      positionTooltip(hitRect.right, hitRect.top + 10);
-    });
-    group.addEventListener('blur', hideTooltip);
+    group.addEventListener('pointerenter', preview);
+    group.addEventListener('pointerleave', showResting);
+    group.addEventListener('focus', preview);
+    group.addEventListener('blur', showResting);
     svg.appendChild(group);
   }
 

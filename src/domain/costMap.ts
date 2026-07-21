@@ -195,13 +195,23 @@ export function niceStep(rough: number): number {
 }
 
 /**
- * Up to `count` nice positive iso-growth guide deltas inside the visible
- * range (DD-005): parallels to the end = start diagonal, spaced by a nice
- * step derived from the largest positive delta actually on screen.
+ * Nice positive iso-growth guide deltas (DD-005): parallels to the end = start
+ * diagonal. Without a `ceiling` they stop just past the largest positive delta
+ * on screen (`count` of them). With a `ceiling` (the axis token span) they fill
+ * the whole plotted range instead, evenly spaced by a nice step sized to keep
+ * the count bounded (~6 across the range) regardless of how small the data's
+ * own max delta is — so a plot to 300K shows +50K…+250K, not just the deltas
+ * that data points happen to reach.
  */
-export function isoGrowthDeltas(points: { contextDelta: number }[], count = 3): number[] {
+export function isoGrowthDeltas(points: { contextDelta: number }[], count = 3, ceiling?: number): number[] {
   const maxDelta = Math.max(0, ...points.map((p) => p.contextDelta));
   if (maxDelta <= 0) return [];
+  if (ceiling !== undefined && ceiling > 0) {
+    const step = niceStep(ceiling / 6);
+    const deltas: number[] = [];
+    for (let k = 1; k * step < ceiling; k++) deltas.push(k * step);
+    return deltas;
+  }
   const step = niceStep(maxDelta / count);
   const deltas: number[] = [];
   for (let k = 1; k <= count && k * step <= maxDelta * 1.05; k++) {

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 - 21.07.2026
+
+- **Copilot per-call context (opt-in OpenTelemetry)**: GitHub Copilot's
+  zero-config log records only request-level usage, so the Prompt timeline
+  could not show per-call context from it. If you turn on Copilot Chat's own
+  OpenTelemetry export and point it at a loopback endpoint, Agent Context
+  Trail now receives those spans locally and fills the timeline with real
+  per-LLM-call input, **cache-read**, output, and reasoning tokens.
+- Privacy-first receiver: the extension binds only the loopback port you
+  choose, keeps allowlisted usage and correlation fields, and drops prompts,
+  code, tool payloads, and repository metadata before writing — even if
+  content capture is left on. Spans are stored as the extension's own daily
+  JSONL, pruned to the current plus two preceding calendar months, and it
+  never edits your VS Code settings for you. See the README for setup.
+- **Prompt cost map** now shows a selected prompt in a persistent side detail
+  panel instead of a floating tooltip: hover a bubble to preview it, click to
+  pin it, with cost and LLM-call count as headline stats. Iso-growth guide
+  lines now span the whole plotted range so the scale reads clearly even when
+  no data point reaches the top.
+
 ## 0.2.0 - 19.07.2026
 
 - New **Prompt cost map**: an accessible context-growth scatter plot for each

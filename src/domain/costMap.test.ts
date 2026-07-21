@@ -174,6 +174,18 @@ test('isoGrowthDeltas: no positive growth means no guides', () => {
   assert.deepEqual(isoGrowthDeltas([{ contextDelta: 0 }, { contextDelta: -5_000 }]), []);
 });
 
+test('isoGrowthDeltas: a ceiling fills the whole range past the data max delta', () => {
+  // small data delta (113K) but a 300K plot -> guides every 50K up to (not incl.) 300K
+  assert.deepEqual(
+    isoGrowthDeltas([{ contextDelta: 113_489 }], 3, 300_000),
+    [50_000, 100_000, 150_000, 200_000, 250_000]
+  );
+});
+
+test('isoGrowthDeltas: a ceiling still yields nothing without positive growth', () => {
+  assert.deepEqual(isoGrowthDeltas([{ contextDelta: -5_000 }], 3, 300_000), []);
+});
+
 test('niceStep picks the smallest 1/2/5 step covering the rough value', () => {
   assert.equal(niceStep(88_000), 100_000);
   assert.equal(niceStep(3), 5);

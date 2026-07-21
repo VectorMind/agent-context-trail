@@ -2868,18 +2868,18 @@ function applyDetail(detail: ConversationDetailPayload | undefined, preserveSele
 // ---- storage footer -----------------------------------------------------------------
 
 /**
- * Non-collapsible, always at the bottom of the page (surfaces-and-privacy.md
- * "Storage Footer"). Every adapter today stays in-memory-only, so this
- * always reads "no local data stored" — it exists so that fact is a visible
- * guarantee, not just a policy, the moment any adapter ever does persist
- * something to disk.
+ * Copilot-only troubleshooting line at the bottom of the page: the live
+ * "Copilot detail: …" OTel activation state and local usage-history size. It
+ * shows on the Copilot tab alone — the other providers persist nothing, so the
+ * line would be noise there. The retention/privacy explanation it used to carry
+ * now lives in the README.
  */
 function renderStorageFooter(container: HTMLElement): void {
+  if (state.selectedProvider !== 'copilot') return;
+  const lines = state.storageFooter;
+  if (!lines?.length) return;
   const footer = document.createElement('div');
   footer.className = 'storage-footer';
-  const lines = state.storageFooter?.length
-    ? state.storageFooter
-    : ['No local data stored — Agent Context Trail reads provider logs directly and writes nothing of its own to disk.'];
   for (const line of lines) {
     const row = document.createElement('div');
     row.textContent = line;

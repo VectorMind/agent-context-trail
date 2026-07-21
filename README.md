@@ -102,9 +102,12 @@ run, no export step.
   metadata — those are dropped before anything is written, even if content
   capture is left on), and stores them as its own daily JSONL under the
   extension's storage, pruned to the current plus two preceding calendar
-  months. The panel's Storage Footer shows the activation state and how much
-  local usage history is on disk. Cache-**write** tokens stay unavailable
-  because Copilot does not emit them on any surface.
+  months. This local usage history is the extension's own Copilot
+  OpenTelemetry store; provider logs are read directly and never copied. When
+  the Copilot tab is open, the panel's status footer shows the activation state
+  and how much local usage history is on disk, as a troubleshooting aid.
+  Cache-**write** tokens stay unavailable because Copilot does not emit them on
+  any surface.
 - Cost is `estimated`, the same bring-your-own-token convention used for
   Claude and Codex: GitHub does not publish a Copilot token-to-USD rate, so
   this extension estimates against the resolved underlying model's public
