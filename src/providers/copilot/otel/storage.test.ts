@@ -70,6 +70,14 @@ test('skips records written under a different schema version', () => {
   assert.deepEqual(readAllCalls(base), []);
 });
 
+test('continues reading schema-v1 records for existing local history', () => {
+  const base = tmpBase();
+  fs.mkdirSync(otelStorageDir(base), { recursive: true });
+  const file = path.join(otelStorageDir(base), '2026-07-20.jsonl');
+  fs.writeFileSync(file, JSON.stringify({ ...call({ spanId: 'v1' }), schemaVersion: 1 }) + '\n');
+  assert.deepEqual(readAllCalls(base).map((c) => c.spanId), ['v1']);
+});
+
 test('storageBytes reflects only written partitions; empty base is 0', () => {
   const base = tmpBase();
   assert.equal(storageBytes(base), 0);

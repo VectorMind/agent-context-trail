@@ -16,6 +16,8 @@ test('maps the proven correlation keys and real per-call usage', () => {
   assert.ok(turn);
   assert.equal(turn.conversationId, 'bf40277b-cecd-4698-9d62-3b59f815e72c');
   assert.equal(turn.requestId, 'bd1af91e-ad02-47d8-b569-db2d5d11fe64');
+  assert.equal(turn.serverRequestId, 'bd1af91e-ad02-47d8-b569-db2d5d11fe64');
+  assert.equal(turn.responseId, 'bd1af91e-ad02-47d8-b569-db2d5d11fe64');
   assert.equal(turn.traceId, 'd36d20a685446c1839e4dcd00a8ae64c');
   assert.equal(turn.parentSpanId, '3c3879f4a2576394');
   assert.equal(turn.resolvedModel, 'mai-code-1-flash');
@@ -29,6 +31,29 @@ test('maps the proven correlation keys and real per-call usage', () => {
   assert.equal(turn.finishReason, 'stop');
   assert.equal(turn.premiumUsageNanoAiu, 1137630000);
   assert.equal(turn.sourceVersion, '0.57.0');
+});
+
+test('preserves differing provider and standard response IDs separately', () => {
+  const body = {
+    resourceSpans: [{
+      scopeSpans: [{
+        spans: [{
+          traceId: 't1',
+          spanId: 's1',
+          startTimeUnixNano: '1784575940000000000',
+          attributes: [
+            { key: 'gen_ai.operation.name', value: { stringValue: 'chat' } },
+            { key: 'copilot_chat.server_request_id', value: { stringValue: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' } },
+            { key: 'gen_ai.response.id', value: { stringValue: 'aaaaaaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee' } }
+          ]
+        }]
+      }]
+    }]
+  };
+  const [call] = normalizeTraceExport(body);
+  assert.equal(call.requestId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+  assert.equal(call.serverRequestId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+  assert.equal(call.responseId, 'aaaaaaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee');
 });
 
 test('cache-write stays undefined (Copilot never emits it), not zero', () => {

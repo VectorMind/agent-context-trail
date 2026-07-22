@@ -10,8 +10,9 @@
  * kept as 0.
  */
 
-/** Bump when the persisted field set changes; lets the reader skip stale lines. */
-export const OTEL_SCHEMA_VERSION = 1;
+/** Current write schema. The reader explicitly allowlists compatible versions. */
+export const OTEL_SCHEMA_VERSION = 2;
+export const SUPPORTED_OTEL_SCHEMA_VERSIONS = new Set([1, OTEL_SCHEMA_VERSION]);
 
 export interface NormalizedCall {
   /** ISO 8601, from the span start time. */
@@ -26,11 +27,14 @@ export interface NormalizedCall {
   spanId: string;
   parentSpanId?: string;
   /**
-   * copilot_chat.server_request_id (== gen_ai.response.id) — equals the
-   * chatSessions request's `responseId` (proven). All LLM-call rounds of one
-   * user turn share this id.
+   * Legacy primary ID retained for schema-v1 history compatibility. Schema v1
+   * preferred copilot_chat.server_request_id over gen_ai.response.id.
    */
   requestId?: string;
+  /** copilot_chat.server_request_id; normally shared by all rounds of a turn. */
+  serverRequestId?: string;
+  /** gen_ai.response.id; may differ from the provider-specific request ID. */
+  responseId?: string;
   /** gen_ai.operation.name (always "chat" for persisted records). */
   operation: string;
   requestedModel?: string;

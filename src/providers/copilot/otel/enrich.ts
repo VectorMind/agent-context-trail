@@ -7,7 +7,8 @@ import { NormalizedCall } from './types';
  * calls to the Copilot chatSessions request model by proven stable IDs:
  *
  *   conversation : gen_ai.conversation.id == chatSessions filename (sessionId)
- *   request/turn : copilot_chat.server_request_id == request.result.metadata.responseId
+ *   request/turn : exact server/response ID match, then an unambiguous UUID
+ *                  version-nibble compatibility match
  *   per-call     : each chat span (spanId), ordered by start time = the request's rounds
  *
  * When a request has a confident per-call match, its skeletal `llmCalls` (round
@@ -50,19 +51,55 @@ function otelCallToLlmCall(call: NormalizedCall, index: number, pricing: Pricing
   };
 }
 
-/** Group normalized calls by their request id (server_request_id / responseId). */
+function callCorrelationIds(call: NormalizedCall): string[] {
+  return [...new Set([call.serverRequestId, call.responseId, call.requestId].filter((id): id is string => !!id))];
+}
+
+/**
+ * Mask only the UUID version nibble (the first nibble of the third group).
+ * Some Copilot backends emit otherwise identical IDs with different UUID
+ * versions; broader normalization would make correlation speculative.
+ */
+export function uuidWithoutVersionNibble(value: string): string | undefined {
+  const normalized = value.toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)) {
+    return undefined;
+  }
+  return `${normalized.slice(0, 14)}*${normalized.slice(15)}`;
+}
+
+/** Group normalized calls by their turn-level request id. */
 export function groupCallsByRequestId(calls: NormalizedCall[]): Map<string, NormalizedCall[]> {
   const byId = new Map<string, NormalizedCall[]>();
   for (const call of calls) {
-    if (!call.requestId) continue;
-    const bucket = byId.get(call.requestId);
+    const groupId = call.serverRequestId ?? call.requestId ?? call.responseId;
+    if (!groupId) continue;
+    const bucket = byId.get(groupId);
     if (bucket) bucket.push(call);
-    else byId.set(call.requestId, [call]);
+    else byId.set(groupId, [call]);
   }
   for (const bucket of byId.values()) {
     bucket.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   }
   return byId;
+}
+
+function matchingCalls(responseId: string, grouped: Map<string, NormalizedCall[]>): NormalizedCall[] | undefined {
+  const groups = [...grouped.values()];
+  const exact = groups.filter((calls) => calls.some((call) => callCorrelationIds(call).includes(responseId)));
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return undefined;
+
+  const maskedResponseId = uuidWithoutVersionNibble(responseId);
+  if (!maskedResponseId) return undefined;
+  const compatible = groups.filter((calls) =>
+    calls.some((call) =>
+      callCorrelationIds(call).some((id) => uuidWithoutVersionNibble(id) === maskedResponseId)
+    )
+  );
+  // The calls are already conversation-scoped. Still, accept this compatibility
+  // fallback only when exactly one turn-level group can own the session ID.
+  return compatible.length === 1 ? compatible[0] : undefined;
 }
 
 /**
@@ -81,7 +118,7 @@ export function applyOtelEnrichment(
 
   return requests.map((request, i) => {
     const responseId = responseIdByIndex[i];
-    const matched = responseId ? byRequestId.get(responseId) : undefined;
+    const matched = responseId ? matchingCalls(responseId, byRequestId) : undefined;
     if (!matched || matched.length === 0) return request;
 
     const llmCalls = matched.map((call, index) => otelCallToLlmCall(call, index, pricing));

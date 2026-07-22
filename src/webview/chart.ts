@@ -1153,8 +1153,14 @@ export function renderPromptTimeline(
     }
   }
 
-  const inBars: LaneBar[] = events.map((e) => (e.kind === 'tool' ? { value: e.tool.inputChars, color: colorFor(e.tool) } : { color: '' }));
-  renderEventLane(laneLayer, colX, plotRight, inLayout, 'IN (chars)', inBars, formatTokensCompact);
+  if (hasIn) {
+    const inBars: LaneBar[] = events.map((e) =>
+      e.kind === 'tool' ? { value: e.tool.inputChars, color: colorFor(e.tool) } : { color: '' }
+    );
+    renderEventLane(laneLayer, colX, plotRight, inLayout, 'IN (chars)', inBars, formatTokensCompact);
+  } else {
+    unavailableLaneNote(laneLayer, inLayout.captionY, 'IN (chars)', 'no tool call recorded');
+  }
 
   if (hasOut) {
     const outBars: LaneBar[] = events.map((e) =>

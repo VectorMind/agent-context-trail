@@ -124,6 +124,32 @@ function parseJsonObject(value: string | undefined): Record<string, unknown> | u
   }
 }
 
+function toolCallInput(payload: Record<string, unknown>): unknown {
+  const raw = payload.type === 'custom_tool_call' ? payload.input : payload.arguments;
+  return typeof raw === 'string' ? parseJsonObject(raw) ?? raw : raw;
+}
+
+function toolResultText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const text = value
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return '';
+        const blockText = (entry as Record<string, unknown>).text;
+        return typeof blockText === 'string' ? blockText : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+    if (text) return text;
+  }
+  if (value === undefined) return undefined;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function toolInputPreview(input: Record<string, unknown> | undefined, maxLen = 70): string | undefined {
   if (!input) return undefined;
   for (const key of ['command', 'path', 'file_path', 'pattern', 'q', 'query', 'prompt', 'url']) {
@@ -445,30 +471,36 @@ export async function parseCodexSession(
       continue;
     }
 
-    if (record.type === 'response_item' && payload?.type === 'function_call') {
+    if (
+      record.type === 'response_item' &&
+      (payload?.type === 'function_call' || payload?.type === 'custom_tool_call')
+    ) {
       current.request.toolCallCount += 1;
-      const argsString = typeof payload.arguments === 'string' ? payload.arguments : undefined;
-      const argsObject = parseJsonObject(argsString);
+      const input = toolCallInput(payload);
+      const inputObject = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : undefined;
       const callId = typeof payload.call_id === 'string' ? payload.call_id : `tool-${current.request.toolCallCount}`;
       const tool: ToolCallInfo = {
         id: callId,
         name: typeof payload.name === 'string' ? payload.name : 'unknown',
         startedAt: record.timestamp,
-        inputChars: charSize(argsObject ?? argsString),
-        inputPreview: toolInputPreview(argsObject)
+        inputChars: charSize(input),
+        inputPreview: toolInputPreview(inputObject) ?? (typeof input === 'string' ? previewText(input, 70) : undefined)
       };
       current.request.tools?.push(tool);
       current.openTools.set(callId, tool);
       continue;
     }
 
-    if (record.type === 'response_item' && payload?.type === 'function_call_output') {
+    if (
+      record.type === 'response_item' &&
+      (payload?.type === 'function_call_output' || payload?.type === 'custom_tool_call_output')
+    ) {
       const callId = typeof payload.call_id === 'string' ? payload.call_id : undefined;
       if (!callId) continue;
       const tool = current.openTools.get(callId);
       if (!tool) continue;
       current.openTools.delete(callId);
-      const output = typeof payload.output === 'string' ? payload.output : undefined;
+      const output = toolResultText(payload.output);
       tool.outputChars = charSize(output);
       if (isToolError(output)) tool.isError = true;
       if (record.timestamp && tool.startedAt) {
@@ -545,7 +577,7 @@ export async function parseCodexSession(
 
 /**
  * On-demand Call detail extraction (plans/2026-07/07/call-details, OP-101):
- * locates one function_call / function_call_output pair by call_id and
+ * locates one function/custom tool call and output pair by call_id and
  * returns only the bounded excerpt — the full payload never leaves the host.
  */
 export async function extractCodexToolCallDetail(filePath: string, toolCallId: string): Promise<ToolCallDetail> {
@@ -570,12 +602,14 @@ export async function extractCodexToolCallDetail(filePath: string, toolCallId: s
     }
     const payload = record.payload;
     if (!payload || payload.call_id !== toolCallId) continue;
-    if (payload.type === 'function_call' && !inputFound) {
-      const argsString = typeof payload.arguments === 'string' ? payload.arguments : undefined;
-      input = parseJsonObject(argsString) ?? argsString;
+    if ((payload.type === 'function_call' || payload.type === 'custom_tool_call') && !inputFound) {
+      input = toolCallInput(payload);
       inputFound = true;
-    } else if (payload.type === 'function_call_output' && !resultFound) {
-      resultText = typeof payload.output === 'string' ? payload.output : undefined;
+    } else if (
+      (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') &&
+      !resultFound
+    ) {
+      resultText = toolResultText(payload.output);
       resultFound = true;
     }
     if (inputFound && resultFound) break;

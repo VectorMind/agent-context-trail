@@ -105,6 +105,8 @@ export function normalizeTraceExport(body: unknown): NormalizedCall[] {
 
         const startMs = nanosToMs(span.startTimeUnixNano);
         const endMs = nanosToMs(span.endTimeUnixNano);
+        const serverRequestId = toStringVal(a.get('copilot_chat.server_request_id'));
+        const responseId = toStringVal(a.get('gen_ai.response.id'));
 
         out.push({
           timestamp: startMs !== undefined ? new Date(startMs).toISOString() : new Date(0).toISOString(),
@@ -112,8 +114,9 @@ export function normalizeTraceExport(body: unknown): NormalizedCall[] {
           traceId: span.traceId,
           spanId: span.spanId,
           parentSpanId: span.parentSpanId,
-          requestId:
-            toStringVal(a.get('copilot_chat.server_request_id')) ?? toStringVal(a.get('gen_ai.response.id')),
+          requestId: serverRequestId ?? responseId,
+          serverRequestId,
+          responseId,
           operation: 'chat',
           requestedModel: toStringVal(a.get('gen_ai.request.model')),
           resolvedModel: toStringVal(a.get('gen_ai.response.model')),

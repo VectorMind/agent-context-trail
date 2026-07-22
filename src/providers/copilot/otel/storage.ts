@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { NormalizedCall, OTEL_SCHEMA_VERSION } from './types';
+import { NormalizedCall, SUPPORTED_OTEL_SCHEMA_VERSIONS } from './types';
 
 /**
  * Daily-partitioned JSONL storage for normalized Copilot OTel calls (plan_v2
@@ -111,7 +111,7 @@ export function readAllCalls(baseDir: string): NormalizedCall[] {
       } catch {
         continue; // partial trailing line or corruption
       }
-      if (call.schemaVersion !== OTEL_SCHEMA_VERSION) continue;
+      if (!SUPPORTED_OTEL_SCHEMA_VERSIONS.has(call.schemaVersion)) continue;
       if (!call.spanId || seen.has(call.spanId)) continue;
       seen.add(call.spanId);
       out.push(call);

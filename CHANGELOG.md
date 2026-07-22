@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1 - 22.07.2026
+
+- Fixed Copilot OTel enrichment when enterprise and other backend variants
+  emit different `server_request_id` and `responseId` UUID versions. The
+  extension now preserves both OTel response identifiers, prefers exact
+  correlation, and permits a UUID-version-nibble fallback only when it is
+  unambiguous within the conversation. Existing schema-v1 local history
+  remains readable.
+- Fixed Codex tool-call tracking for the `custom_tool_call` /
+  `custom_tool_call_output` event shape (e.g. `exec`): these are now counted
+  and shown in tool metrics and the Call detail panel like other tool calls.
+  The Prompt timeline's IN lane also now shows an honest "no tool call
+  recorded" note instead of an empty lane when a request truly has none.
+
 ## 0.3.0 - 21.07.2026
 
 - **Copilot per-call context (opt-in OpenTelemetry)**: GitHub Copilot's
