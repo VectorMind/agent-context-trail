@@ -88,18 +88,31 @@ order:
 - **Prompt cost map** - a collapsible panel placed after the
   conversation-level overview surfaces and before the Conversation thread
   view, so it reads as a prompt selector feeding the panels below: one
-  scatter mark per
-  request, encoding context tokens at the request's first LLM call (x),
-  context tokens at its last LLM call (y), USD cost (mark area), and LLM-call
-  count (mark color with a labeled gradient legend). It carries a two-state
+  scatter mark per request, in one of two chart variants selected by an
+  in-panel toggle. Both variants plot the same eligible requests and both
+  encode USD cost as mark area, so a request is the same-sized mark in
+  either view; cost is never additionally mapped to an axis.
+
+  - **Context growth** (default): context tokens at the request's first LLM
+    call (x) versus its last (y) on one shared token scale, LLM-call count
+    as mark color with a labeled gradient legend, and equal-growth diagonal
+    guides.
+  - **Calls vs work**: LLM-call count (x) versus context work — the sum of
+    context tokens across the request's LLM calls (y) — with the request's
+    cache-write token share as mark color, and tokens-per-call rays through
+    the origin as guides.
+
+  It carries a two-state
   scope toggle: **Selected conversation** (default; the current conversation's
   requests) and **Selected period** (requests of the current workspace and
   currently selected provider whose start time falls inside an All time /
   rolling day / week / month filter — the narrow exception defined in
   `product-scope.md`). Requests whose endpoints or cost are unavailable are
   reported as explicit exclusion counts with reasons, never plotted as
-  zero-valued marks. Activating a mark selects that request (and, in period
+  zero-valued marks; both variants share one eligibility rule. Activating a
+  mark selects that request (and, in period
   mode, its conversation first) through the normal in-place selection path.
+  The variant choice persists like the panel's other view state.
 
 Panel interaction rules:
 
@@ -107,6 +120,15 @@ Panel interaction rules:
   chart bar) updates the panels below **in place** on the same page. No
   navigation to another page, no scroll jump, no scroll animation; a collapsed
   panel that a selection targets auto-expands.
+- Every full re-render of the page — selection updates and the periodic data
+  refresh alike — must preserve the exact scroll position, vertical and
+  horizontal, of the page itself and of **every** inner scrollable area
+  (chart scrollers, table scrollers, and any scrollable surface added
+  later). This is a blanket rule enforced by a generic mechanism, not a
+  per-surface list: a scroller that resets on refresh is a defect. Page
+  height must likewise stay stable during a refresh (stale data keeps
+  rendering while fresh data loads) so preserved positions remain
+  meaningful.
 - Current Status must follow the selected conversation for conversation-scoped
   context state. It must not stay pinned to an unrelated latest conversation
   once the user has selected a different conversation in the panel.

@@ -1,11 +1,13 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import {
+  cacheWriteShare,
   costBubbleRadius,
   COST_BUBBLE_MAX_RADIUS,
   COST_BUBBLE_MIN_RADIUS,
   deriveCostMapPoints,
   isoGrowthDeltas,
+  isoRateSlopes,
   iterationScale,
   iterationT,
   niceStep,
@@ -190,6 +192,35 @@ test('niceStep picks the smallest 1/2/5 step covering the rough value', () => {
   assert.equal(niceStep(88_000), 100_000);
   assert.equal(niceStep(3), 5);
   assert.equal(niceStep(1), 1);
+});
+
+// ---- calls-variant helpers (plans/2026-07/23/cost-map-calls-variant) --------
+
+test('cacheWriteShare: cache-write tokens over the total of all four series', () => {
+  const share = cacheWriteShare({ ...EMPTY_USAGE, cacheReadTokens: 700, cacheCreationTokens: 200, inputTokens: 50, outputTokens: 50 });
+  assert.equal(share, 0.2);
+});
+
+test('cacheWriteShare: no tokens at all means 0, not NaN', () => {
+  assert.equal(cacheWriteShare({ ...EMPTY_USAGE }), 0);
+});
+
+test('isoRateSlopes: nice tokens-per-call steps up to the steepest visible slope', () => {
+  // steepest slope: 210K work / 2 calls = 105K tok/call -> 50K step (105K/4 -> 26.25K -> 50K)
+  const slopes = isoRateSlopes([
+    { iterations: 2, contextWork: 210_000 },
+    { iterations: 10, contextWork: 100_000 }
+  ]);
+  assert.deepEqual(slopes, [50_000, 100_000]);
+});
+
+test('isoRateSlopes: zero work means no rays', () => {
+  assert.deepEqual(isoRateSlopes([{ iterations: 3, contextWork: 0 }]), []);
+});
+
+test('isoRateSlopes: always yields at least one ray when there is positive work', () => {
+  const slopes = isoRateSlopes([{ iterations: 1, contextWork: 1 }]);
+  assert.ok(slopes.length >= 1);
 });
 
 // ---- overlap handling (DD-013) ----------------------------------------------

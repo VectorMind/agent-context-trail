@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0 - 23.07.2026
+
+- **Prompt cost map "Calls vs work" variant**: a new toggle switches the map
+  between two projections of the same prompts. The original **Context growth**
+  view keeps start vs end context; the new **Calls vs work** view plots LLM
+  calls (x) against context work — the summed per-call context tokens — (y),
+  with bubble color showing the cache-write share of the prompt's tokens, the
+  expensive part of the token mix. Bubble area stays USD cost in both, so a
+  prompt is the same bubble either way.
+- Origin rays in the calls variant mark equal tokens-per-call, the analog of
+  the context view's iso-growth diagonals, so prompts on one ray share an
+  average context per call.
+- The detail panel gains a cache-write-share row in the calls variant, the
+  legend labels whichever channel color currently encodes, and your chosen
+  variant persists across sessions like the scope and period filters.
+
 ## 0.3.1 - 22.07.2026
 
 - Fixed Copilot OTel enrichment when enterprise and other backend variants

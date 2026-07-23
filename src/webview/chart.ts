@@ -1,8 +1,10 @@
 import { ConversationListItem, LlmCallInfo, PromptRequest, ToolCallInfo, UsageTokens } from '../domain/types';
 import {
   CostMapPoint,
+  cacheWriteShare,
   costBubbleRadius,
   isoGrowthDeltas,
+  isoRateSlopes,
   iterationScale,
   iterationT,
   overlapOffsets
@@ -1533,13 +1535,18 @@ export function renderOverviewChart(
   }
 }
 
-// ---- Prompt cost map (plans/2026-07/19/prompt-cost-map, Option A) -----------------
-// Start/end context scatter: x = context tokens at the prompt's first LLM
-// call, y = at its last, bubble AREA = USD cost, bubble color = LLM-call
-// count on a min→max gradient scaled to the visible scope. Hand-built SVG
-// like every sibling chart (DD-018); axes share one token scale (same unit),
-// so this is a deliberate multidimensional scatter, not a dual-axis overlay
-// (ui-design.md).
+// ---- Prompt cost map (plans/2026-07/19/prompt-cost-map, Option A; calls
+// variant: plans/2026-07/23/cost-map-calls-variant) ---------------------------
+// Two projections of the same points, bubble AREA = USD cost in both so a
+// prompt is the same bubble either way:
+//   context — x = context tokens at the prompt's first LLM call, y = at its
+//             last (one shared token scale, honest diagonal), color =
+//             LLM-call count on a min→max gradient.
+//   calls   — x = LLM-call count, y = context work (summed per-call context
+//             tokens), color = cache-write token share; origin rays mark
+//             equal tokens-per-call.
+// Hand-built SVG like every sibling chart (DD-018); each axis carries one
+// unit, never a dual-axis overlay (ui-design.md).
 
 const CM_WIDTH = 660;
 const CM_M_LEFT = 56;
@@ -1568,21 +1575,39 @@ export interface CostMapSelection {
   promptIndex: number;
 }
 
+/**
+ * Which projection of the shared points the map draws (both keep area = cost):
+ * 'context' — x start context, y end context, color LLM-call count;
+ * 'calls'   — x LLM calls, y context work, color cache-write share.
+ */
+export type CostMapVariant = 'context' | 'calls';
+
 export interface CostMapChartArgs {
   points: CostMapPoint[];
   selected?: CostMapSelection;
   onSelect: (point: CostMapPoint) => void;
   /** Period mode: points span conversations, so tooltips name the conversation. */
   showConversation?: boolean;
+  /** Chart projection; defaults to 'context' (the original map). */
+  variant?: CostMapVariant;
 }
 
-function costMapPointLabel(point: CostMapPoint, overlap: number, showConversation: boolean): string {
+/** Compact percent for the cache-write share channel (identity never color-alone). */
+function formatSharePct(share: number): string {
+  const pct = share * 100;
+  return `${(pct >= 10 || pct === 0 ? pct.toFixed(0) : pct.toFixed(1)).replace(/\.0$/, '')}%`;
+}
+
+function costMapPointLabel(point: CostMapPoint, overlap: number, showConversation: boolean, variant: CostMapVariant): string {
   const delta = `${point.contextDelta >= 0 ? '+' : '−'}${formatTokens(Math.abs(point.contextDelta))}`;
   return (
     `Prompt ${point.promptIndex + 1}` +
     (showConversation && point.conversationTitle ? ` of ${point.conversationTitle}` : '') +
     `: start context ${formatTokens(point.startContext)} tokens, end ${formatTokens(point.endContext)} tokens, ` +
     `delta ${delta}, ${point.iterations} LLM call${point.iterations === 1 ? '' : 's'}, ` +
+    (variant === 'calls'
+      ? `context work ${formatTokens(point.contextWork)} tokens, cache write share ${formatSharePct(cacheWriteShare(point.usage))}, `
+      : '') +
     `${point.toolCalls} tool call${point.toolCalls === 1 ? '' : 's'}, cost ${formatUsd(point.costUsd)} (${point.costSource})` +
     (overlap > 1 ? `, overlaps ${overlap - 1} other prompt${overlap === 2 ? '' : 's'} at this position` : '') +
     '. Activate to select this prompt.'
@@ -1643,7 +1668,8 @@ function fillCostMapDetail(
   overlap: number,
   color: string,
   showConversation: boolean,
-  pinned: boolean
+  pinned: boolean,
+  variant: CostMapVariant
 ): void {
   panel.textContent = '';
   panel.classList.remove('is-empty');
@@ -1678,13 +1704,15 @@ function fillCostMapDetail(
 
   // two headline stats side by side, set apart from the table so they read
   // first: cost (encoded as bubble AREA — shown neutral so it doesn't borrow
-  // the LLM-count gradient's hue) and LLM calls (encoded as bubble COLOR —
-  // shown in that same per-point gradient color).
+  // the gradient's hue) and LLM calls. The LLM-call value carries the
+  // per-point gradient color only in the context variant, where color encodes
+  // it; in the calls variant color encodes cache-write share instead, so the
+  // tint moves to that table row below.
   const heroes = document.createElement('div');
   heroes.className = 'costmap-detail-heroes';
   heroes.appendChild(costMapHero(formatUsd(point.costUsd), `Cost (${point.costSource})`, undefined));
   heroes.appendChild(
-    costMapHero(String(point.iterations), point.iterations === 1 ? 'LLM call' : 'LLM calls', color)
+    costMapHero(String(point.iterations), point.iterations === 1 ? 'LLM call' : 'LLM calls', variant === 'context' ? color : undefined)
   );
   panel.appendChild(heroes);
 
@@ -1702,6 +1730,10 @@ function fillCostMapDetail(
   );
   table.appendChild(costMapDetailRow(TOOL_CALLS_COLOR, 'Tool calls', String(point.toolCalls)));
   table.appendChild(costMapDetailRow(undefined, 'Context work', `${formatTokens(point.contextWork)} tok`));
+  if (variant === 'calls') {
+    // bubble COLOR encodes this share in the calls variant, so the swatch carries it
+    table.appendChild(costMapDetailRow(color, 'Cache write share', formatSharePct(cacheWriteShare(point.usage))));
+  }
   for (const series of TOKEN_SERIES) {
     const value = point.usage[series.key];
     if (value > 0) table.appendChild(costMapDetailRow(series.color, series.label, formatTokens(value)));
@@ -1712,16 +1744,27 @@ function fillCostMapDetail(
   panel.appendChild(table);
 }
 
+/** Variant-specific wording for the gradient legend entry. */
+interface CostMapGradientLegend {
+  single: boolean;
+  /** Bare low endpoint (e.g. "1" or "0%"). */
+  minText: string;
+  /** High endpoint including the channel name (e.g. "12 LLM calls"). */
+  maxText: string;
+  /** Whole-scope wording when every visible prompt shares one value. */
+  singleText: string;
+}
+
 /**
- * Legend for the cost map: example bubble sizes (area = cost) and the
- * iteration gradient with labeled min/max endpoints — or a single-value
- * swatch when every visible prompt has the same count, rather than a false
- * range (OP-004). Identity is never color-alone: exact counts stay in
- * tooltips, focus text, and aria labels.
+ * Legend for the cost map: example bubble sizes (area = cost) and the color
+ * gradient with labeled min/max endpoints — or a single-value swatch when
+ * every visible prompt shares one value, rather than a false range (OP-004).
+ * Identity is never color-alone: exact values stay in the detail panel,
+ * focus text, and aria labels.
  */
 function costMapLegend(
   maxCost: number,
-  scale: { min: number; max: number; single: boolean },
+  gradient: CostMapGradientLegend,
   lowRgb: [number, number, number],
   highRgb: [number, number, number]
 ): HTMLElement {
@@ -1744,27 +1787,27 @@ function costMapLegend(
   sizeItem.appendChild(sizeLabel);
   legend.appendChild(sizeItem);
 
-  const iterItem = document.createElement('span');
-  iterItem.className = 'legend-item';
-  if (scale.single) {
+  const gradientItem = document.createElement('span');
+  gradientItem.className = 'legend-item';
+  if (gradient.single) {
     const key = document.createElement('span');
     key.className = 'legend-swatch';
     key.style.background = mixRgb(lowRgb, highRgb, 0.5);
-    iterItem.appendChild(key);
+    gradientItem.appendChild(key);
     const label = document.createElement('span');
-    label.textContent = `${scale.min} LLM call${scale.min === 1 ? '' : 's'} (all prompts)`;
-    iterItem.appendChild(label);
+    label.textContent = gradient.singleText;
+    gradientItem.appendChild(label);
   } else {
     const low = document.createElement('span');
-    low.textContent = String(scale.min);
+    low.textContent = gradient.minText;
     const bar = document.createElement('span');
     bar.className = 'gradient-bar';
     bar.style.background = `linear-gradient(90deg, ${mixRgb(lowRgb, highRgb, 0)}, ${mixRgb(lowRgb, highRgb, 1)})`;
     const high = document.createElement('span');
-    high.textContent = `${scale.max} LLM calls`;
-    iterItem.append(low, bar, high);
+    high.textContent = gradient.maxText;
+    gradientItem.append(low, bar, high);
   }
-  legend.appendChild(iterItem);
+  legend.appendChild(gradientItem);
 
   const selItem = document.createElement('span');
   selItem.className = 'legend-item';
@@ -1785,18 +1828,39 @@ function costMapLegend(
 export function renderCostMapChart(container: HTMLElement, args: CostMapChartArgs): void {
   const { points, selected, onSelect } = args;
   const showConversation = !!args.showConversation;
+  const variant: CostMapVariant = args.variant ?? 'context';
   if (points.length === 0) return;
 
-  const scale = iterationScale(points.map((p) => p.iterations));
+  // Color channel per variant, sharing one min→max gradient mechanism
+  // (OP-004): LLM-call count in the context variant, cache-write share of the
+  // prompt's tokens in the calls variant.
+  const colorValueFor = (point: CostMapPoint): number =>
+    variant === 'context' ? point.iterations : cacheWriteShare(point.usage);
+  const scale = iterationScale(points.map(colorValueFor));
   const lowRgb = resolveRgb(ITERATIONS_LOW_COLOR) ?? [86, 156, 214];
   const highRgb = resolveRgb(ITERATIONS_HIGH_COLOR) ?? [209, 105, 105];
-  const colorFor = (point: CostMapPoint): string => mixRgb(lowRgb, highRgb, iterationT(point.iterations, scale));
+  const colorFor = (point: CostMapPoint): string => mixRgb(lowRgb, highRgb, iterationT(colorValueFor(point), scale));
 
   const maxCost = Math.max(...points.map((p) => p.costUsd));
 
+  const gradientLegend: CostMapGradientLegend =
+    variant === 'context'
+      ? {
+          single: scale.single,
+          minText: String(scale.min),
+          maxText: `${scale.max} LLM calls`,
+          singleText: `${scale.min} LLM call${scale.min === 1 ? '' : 's'} (all prompts)`
+        }
+      : {
+          single: scale.single,
+          minText: formatSharePct(scale.min),
+          maxText: `${formatSharePct(scale.max)} cache write`,
+          singleText: `${formatSharePct(scale.min)} cache write (all prompts)`
+        };
+
   const wrapper = document.createElement('div');
   wrapper.className = 'chart-wrapper';
-  wrapper.appendChild(costMapLegend(maxCost, scale, lowRgb, highRgb));
+  wrapper.appendChild(costMapLegend(maxCost, gradientLegend, lowRgb, highRgb));
 
   // Chart on the left, a persistent detail panel on the right (no floating
   // popover): hover previews a bubble, click pins it there until another is
@@ -1813,15 +1877,24 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
   detail.className = 'costmap-detail';
   body.appendChild(detail);
 
-  // Both axes carry the same unit (context tokens), so they share one scale:
-  // 0 → the nice ceiling of the largest start/end value on screen. The
-  // end = start diagonal is then geometrically honest.
-  const maxToken = Math.max(1, ...points.map((p) => Math.max(p.startContext, p.endContext)));
-  const step = niceStep(maxToken / 4);
-  const tickCount = Math.ceil(maxToken / step);
-  const scaleMax = tickCount * step;
-  const xFor = (tokens: number): number => CM_M_LEFT + (tokens / scaleMax) * CM_PLOT_W;
-  const yFor = (tokens: number): number => CM_PLOT_BOTTOM - (tokens / scaleMax) * CM_PLOT_H;
+  // Scales per variant. Context: both axes carry the same unit (context
+  // tokens), so they share one 0 → nice-ceiling scale and the end = start
+  // diagonal is geometrically honest. Calls: x is the small-integer LLM-call
+  // count, y is context work in tokens — different units, so each axis gets
+  // its own nice scale (still one unit per axis, never a dual-axis overlay).
+  const maxX =
+    variant === 'context'
+      ? Math.max(1, ...points.map((p) => Math.max(p.startContext, p.endContext)))
+      : Math.max(1, ...points.map((p) => p.iterations));
+  const xStep = niceStep(maxX / 4);
+  const xTickCount = Math.ceil(maxX / xStep);
+  const xScaleMax = xTickCount * xStep;
+  const yStep = variant === 'context' ? xStep : niceStep(Math.max(1, ...points.map((p) => p.contextWork)) / 4);
+  const yTickCount =
+    variant === 'context' ? xTickCount : Math.ceil(Math.max(1, ...points.map((p) => p.contextWork)) / yStep);
+  const yScaleMax = yTickCount * yStep;
+  const xFor = (v: number): number => CM_M_LEFT + (v / xScaleMax) * CM_PLOT_W;
+  const yFor = (v: number): number => CM_PLOT_BOTTOM - (v / yScaleMax) * CM_PLOT_H;
 
   const svg = svgEl('svg', {
     width: CM_WIDTH,
@@ -1829,87 +1902,129 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
     viewBox: `0 0 ${CM_WIDTH} ${CM_HEIGHT}`,
     role: 'img',
     'aria-label':
-      'Prompt cost map: context tokens at each prompt’s first LLM call (x) versus its last (y); ' +
-      'bubble area is USD cost, bubble color is LLM-call count. Prompts on one diagonal grew their context by the same amount.'
+      variant === 'context'
+        ? 'Prompt cost map: context tokens at each prompt’s first LLM call (x) versus its last (y); ' +
+          'bubble area is USD cost, bubble color is LLM-call count. Prompts on one diagonal grew their context by the same amount.'
+        : 'Prompt cost map: LLM calls per prompt (x) versus context work, the summed context tokens of those calls (y); ' +
+          'bubble area is USD cost, bubble color is the cache-write share of the prompt’s tokens. Prompts on one ray share an average context per call.'
   });
   scroll.appendChild(svg);
 
   const captionY = svgEl('text', { x: CM_M_LEFT, y: CM_CAPTION_Y, class: 'chart-caption', fill: TEXT_MUTED });
-  captionY.textContent = 'END CONTEXT (tokens)';
+  captionY.textContent = variant === 'context' ? 'END CONTEXT (tokens)' : 'CONTEXT WORK (tokens)';
   svg.appendChild(captionY);
   const captionX = svgEl('text', { x: CM_PLOT_RIGHT, y: CM_X_CAPTION_Y, 'text-anchor': 'end', class: 'chart-caption', fill: TEXT_MUTED });
-  captionX.textContent = 'START CONTEXT (tokens)';
+  captionX.textContent = variant === 'context' ? 'START CONTEXT (tokens)' : 'LLM CALLS';
   svg.appendChild(captionX);
 
-  // gridlines + ticks on both axes (compact labels; exact values live in tooltips)
-  for (let t = 0; t <= tickCount; t++) {
-    const value = t * step;
+  // gridlines + ticks on both axes (compact labels; exact values live in the detail panel)
+  for (let t = 0; t <= yTickCount; t++) {
+    const value = t * yStep;
     const y = yFor(value);
     svg.appendChild(svgEl('line', { x1: CM_M_LEFT, y1: y, x2: CM_PLOT_RIGHT, y2: y, stroke: GRID, 'stroke-width': 1 }));
     const yTick = svgEl('text', { x: CM_M_LEFT - 8, y: y + 3, 'text-anchor': 'end', class: 'chart-tick', fill: TEXT_MUTED });
     yTick.textContent = formatTokensCompact(value);
     svg.appendChild(yTick);
+  }
+  for (let t = 0; t <= xTickCount; t++) {
+    const value = t * xStep;
     const x = xFor(value);
     svg.appendChild(svgEl('line', { x1: x, y1: CM_PLOT_TOP, x2: x, y2: CM_PLOT_BOTTOM, stroke: GRID, 'stroke-width': 1 }));
     if (t > 0) {
       const xTick = svgEl('text', { x, y: CM_X_LABEL_Y, 'text-anchor': 'middle', class: 'chart-tick', fill: TEXT_MUTED });
-      xTick.textContent = formatTokensCompact(value);
+      xTick.textContent = variant === 'context' ? formatTokensCompact(value) : String(value);
       svg.appendChild(xTick);
     }
   }
 
-  // ---- equal-growth guides (DD-005): end = start plus nice positive parallels ----
   const guideLayer = svgEl('g', { style: 'pointer-events:none' });
-  guideLayer.appendChild(
-    svgEl('line', {
-      x1: xFor(0),
-      y1: yFor(0),
-      x2: xFor(scaleMax),
-      y2: yFor(scaleMax),
-      stroke: TEXT_MUTED,
-      'stroke-width': 1,
-      'stroke-dasharray': '5 3'
-    })
-  );
-  const diagLabel = svgEl('text', {
-    x: xFor(scaleMax * 0.94),
-    y: yFor(scaleMax * 0.94) + 12,
-    'text-anchor': 'end',
-    class: 'chart-tick',
-    fill: TEXT_MUTED
-  });
-  diagLabel.textContent = 'end = start';
-  guideLayer.appendChild(diagLabel);
-  // parallels span the whole plotted range (ceiling = scaleMax), not just the
-  // deltas data points reach; drawn stronger than the faint gridlines but still
-  // below the bubble layer appended later.
-  for (const delta of isoGrowthDeltas(points, 3, scaleMax)) {
-    if (delta >= scaleMax) continue;
+  if (variant === 'context') {
+    // ---- equal-growth guides (DD-005): end = start plus nice positive parallels ----
     guideLayer.appendChild(
       svgEl('line', {
         x1: xFor(0),
-        y1: yFor(delta),
-        x2: xFor(scaleMax - delta),
-        y2: yFor(scaleMax),
+        y1: yFor(0),
+        x2: xFor(xScaleMax),
+        y2: yFor(xScaleMax),
         stroke: TEXT_MUTED,
-        'stroke-opacity': 0.55,
         'stroke-width': 1,
-        'stroke-dasharray': '4 4'
+        'stroke-dasharray': '5 3'
       })
     );
-    const label = svgEl('text', {
-      x: xFor(0) + 4,
-      y: yFor(delta) - 4,
-      class: 'chart-iso-label',
+    const diagLabel = svgEl('text', {
+      x: xFor(xScaleMax * 0.94),
+      y: yFor(xScaleMax * 0.94) + 12,
+      'text-anchor': 'end',
+      class: 'chart-tick',
       fill: TEXT_MUTED
     });
-    label.textContent = `+${formatTokensCompact(delta)}`;
-    guideLayer.appendChild(label);
+    diagLabel.textContent = 'end = start';
+    guideLayer.appendChild(diagLabel);
+    // parallels span the whole plotted range (ceiling = the shared scale max),
+    // not just the deltas data points reach; drawn stronger than the faint
+    // gridlines but still below the bubble layer appended later.
+    for (const delta of isoGrowthDeltas(points, 3, xScaleMax)) {
+      if (delta >= xScaleMax) continue;
+      guideLayer.appendChild(
+        svgEl('line', {
+          x1: xFor(0),
+          y1: yFor(delta),
+          x2: xFor(xScaleMax - delta),
+          y2: yFor(xScaleMax),
+          stroke: TEXT_MUTED,
+          'stroke-opacity': 0.55,
+          'stroke-width': 1,
+          'stroke-dasharray': '4 4'
+        })
+      );
+      const label = svgEl('text', {
+        x: xFor(0) + 4,
+        y: yFor(delta) - 4,
+        class: 'chart-iso-label',
+        fill: TEXT_MUTED
+      });
+      label.textContent = `+${formatTokensCompact(delta)}`;
+      guideLayer.appendChild(label);
+    }
+  } else {
+    // ---- iso tokens-per-call rays: y = k·x through the origin, the ratio
+    // analog of the equal-growth diagonals. Points on one ray share an
+    // average context per call; above the pack means fatter calls.
+    for (const slope of isoRateSlopes(points)) {
+      const xExit = Math.min(xScaleMax, yScaleMax / slope);
+      const yExit = slope * xExit;
+      guideLayer.appendChild(
+        svgEl('line', {
+          x1: xFor(0),
+          y1: yFor(0),
+          x2: xFor(xExit),
+          y2: yFor(yExit),
+          stroke: TEXT_MUTED,
+          'stroke-opacity': 0.55,
+          'stroke-width': 1,
+          'stroke-dasharray': '4 4'
+        })
+      );
+      const exitsTop = yExit >= yScaleMax;
+      const label = svgEl('text', {
+        x: xFor(xExit) - 4,
+        y: yFor(yExit) + (exitsTop ? 12 : -4),
+        'text-anchor': 'end',
+        class: 'chart-iso-label',
+        fill: TEXT_MUTED
+      });
+      label.textContent = `${formatTokensCompact(slope)}/call`;
+      guideLayer.appendChild(label);
+    }
   }
   svg.appendChild(guideLayer);
 
   // ---- bubbles ----
-  const positions = points.map((p) => ({ x: xFor(p.startContext), y: yFor(p.endContext) }));
+  const positions = points.map((p) =>
+    variant === 'context'
+      ? { x: xFor(p.startContext), y: yFor(p.endContext) }
+      : { x: xFor(p.iterations), y: yFor(p.contextWork) }
+  );
   const offsets = overlapOffsets(positions);
   const placed = points.map((point, i) => ({
     point,
@@ -1978,7 +2093,7 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
   // one, else an invitation. Leaving a bubble reverts to that resting state.
   const showResting = (): void => {
     if (selectedPlaced) {
-      fillCostMapDetail(detail, selectedPlaced.point, selectedPlaced.overlap, colorFor(selectedPlaced.point), showConversation, true);
+      fillCostMapDetail(detail, selectedPlaced.point, selectedPlaced.overlap, colorFor(selectedPlaced.point), showConversation, true, variant);
     } else {
       costMapDetailPlaceholder(detail);
     }
@@ -1988,7 +2103,7 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
   // ---- one focusable hit target per prompt, in prompt order (DD-013) ----
   for (const b of placed) {
     const group = svgEl('g', { class: 'bar-group', tabindex: 0, role: 'button' });
-    group.setAttribute('aria-label', costMapPointLabel(b.point, b.overlap, showConversation));
+    group.setAttribute('aria-label', costMapPointLabel(b.point, b.overlap, showConversation, variant));
     const hit = svgEl('circle', {
       class: 'hit',
       cx: b.cx,
@@ -1999,7 +2114,7 @@ export function renderCostMapChart(container: HTMLElement, args: CostMapChartArg
     group.appendChild(hit);
 
     const preview = (): void =>
-      fillCostMapDetail(detail, b.point, b.overlap, colorFor(b.point), showConversation, b === selectedPlaced);
+      fillCostMapDetail(detail, b.point, b.overlap, colorFor(b.point), showConversation, b === selectedPlaced, variant);
     const select = (): void => onSelect(b.point);
     group.addEventListener('click', select);
     group.addEventListener('keydown', (ev: KeyboardEvent) => {

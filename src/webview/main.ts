@@ -2,6 +2,7 @@ import {
   categoryColorMap,
   COST_COLOR,
   CostMapSelection,
+  CostMapVariant,
   formatDurationMs,
   formatTokens,
   formatTokensCompact,
@@ -75,7 +76,7 @@ const SECTIONS: { id: SectionId; title: string; icon: string; hint: string }[] =
   { id: 'chart', title: 'Tokens per conversation', icon: '▦', hint: 'Token totals per conversation' },
   { id: 'table', title: 'Conversations', icon: '☰', hint: 'Sortable, filterable conversations table' },
   { id: 'context', title: 'Current Context Status', icon: '≣', hint: 'Selected conversation context occupancy' },
-  { id: 'costMap', title: 'Prompt cost map', icon: '⊛', hint: 'Start vs end context, cost, and LLM iterations for every prompt in scope' },
+  { id: 'costMap', title: 'Prompt cost map', icon: '⊛', hint: 'Cost bubbles per prompt: context growth or LLM calls vs context work' },
   { id: 'thread', title: 'Conversation', icon: '∿', hint: 'Selected conversation, prompt by prompt' },
   { id: 'toolTimeline', title: 'Prompt timeline', icon: '▥', hint: 'LLM and tool calls of the selected prompt, in sequence' },
   { id: 'request', title: 'Prompt detail', icon: '◎', hint: 'Selected prompt breakdown' },
@@ -96,6 +97,7 @@ interface PersistedState {
   sectionsCollapsed?: Partial<Record<SectionId, boolean>>;
   costMapScope?: CostMapScope;
   costMapPeriod?: TableTimeFilter;
+  costMapVariant?: CostMapVariant;
 }
 
 interface State {
@@ -129,6 +131,8 @@ interface State {
   costMapScope: CostMapScope;
   costMapPeriod: TableTimeFilter;
   costMapModelFilter?: string;
+  /** Prompt cost map chart projection (plans/2026-07/23/cost-map-calls-variant). */
+  costMapVariant: CostMapVariant;
   /** Period-mode point activation on another conversation: prompt to select once its detail arrives. */
   pendingPromptSelect?: { conversationId: string; promptIndex: number };
   /** Storage Footer lines supplied host-side (Copilot OTel status + storage guarantee). */
@@ -182,7 +186,8 @@ const state: State = {
   costMapPeriod:
     persisted?.costMapPeriod && TABLE_TIME_FILTERS.some((f) => f.key === persisted.costMapPeriod)
       ? persisted.costMapPeriod
-      : 'all'
+      : 'all',
+  costMapVariant: persisted?.costMapVariant === 'calls' ? 'calls' : 'context'
 };
 
 function persistState(): void {
@@ -190,7 +195,8 @@ function persistState(): void {
     layout: state.layout,
     sectionsCollapsed: state.sectionsCollapsed,
     costMapScope: state.costMapScope,
-    costMapPeriod: state.costMapPeriod
+    costMapPeriod: state.costMapPeriod,
+    costMapVariant: state.costMapVariant
   } satisfies PersistedState);
 }
 
@@ -2127,6 +2133,20 @@ const COST_MAP_SCOPES: { key: CostMapScope; label: string; hint: string }[] = [
   }
 ];
 
+/** Chart projection toggle: same points, same cost-as-area, different axes. */
+const COST_MAP_VARIANTS: { key: CostMapVariant; label: string; hint: string }[] = [
+  {
+    key: 'context',
+    label: 'Context growth',
+    hint: 'Start context (x) vs end context (y); bubble area = cost, color = LLM calls'
+  },
+  {
+    key: 'calls',
+    label: 'Calls vs work',
+    hint: 'LLM calls (x) vs context work (y); bubble area = cost, color = cache-write share'
+  }
+];
+
 function costMapPeriodDays(): number | undefined {
   return TABLE_TIME_FILTERS.find((filter) => filter.key === state.costMapPeriod)?.days;
 }
@@ -2208,6 +2228,12 @@ function setCostMapPeriod(key: TableTimeFilter): void {
   render();
 }
 
+function setCostMapVariant(variant: CostMapVariant): void {
+  state.costMapVariant = variant;
+  persistState();
+  render();
+}
+
 /**
  * Point activation (OP-006/DD-020): reuse the existing selection path. A
  * point of the loaded conversation selects that prompt directly; a
@@ -2267,6 +2293,17 @@ function renderCostMapSection(body: HTMLElement): void {
     }
     toolbar.appendChild(periodPills);
   }
+  const variantPills = document.createElement('div');
+  variantPills.className = 'filter-pills';
+  for (const variant of COST_MAP_VARIANTS) {
+    const button = document.createElement('button');
+    button.className = 'filter-pill' + (state.costMapVariant === variant.key ? ' active' : '');
+    button.textContent = variant.label;
+    button.title = variant.hint;
+    button.addEventListener('click', () => setCostMapVariant(variant.key));
+    variantPills.appendChild(button);
+  }
+  toolbar.appendChild(variantPills);
   body.appendChild(toolbar);
 
   const data = costMapData();
@@ -2370,15 +2407,19 @@ function renderCostMapSection(body: HTMLElement): void {
     points,
     selected,
     onSelect: selectCostMapPoint,
-    showConversation: state.costMapScope === 'period'
+    showConversation: state.costMapScope === 'period',
+    variant: state.costMapVariant
   });
 
   // explanatory framing, not causal (DD-017)
   const hint = document.createElement('div');
   hint.className = 'chart-hint';
   hint.textContent =
-    'Prompts on the same diagonal grew their context by the same amount; up-right on a diagonal means the same growth from a larger start. ' +
-    'An explanatory comparison, not a causal model — model rates, cache pricing, and output tokens also shape cost.';
+    state.costMapVariant === 'context'
+      ? 'Prompts on the same diagonal grew their context by the same amount; up-right on a diagonal means the same growth from a larger start. ' +
+        'An explanatory comparison, not a causal model — model rates, cache pricing, and output tokens also shape cost.'
+      : 'Prompts on the same ray averaged the same context per LLM call; above the pack means fatter calls. Bubbles bigger than their height ' +
+        'suggests an expensive token mix (cache writes, model rates) — an explanatory comparison, not a causal model.';
   body.appendChild(hint);
 }
 
@@ -2890,20 +2931,41 @@ function renderStorageFooter(container: HTMLElement): void {
 
 // ---- root render ------------------------------------------------------------------
 
-/** Inner scrollable areas whose position must survive a full re-render. */
-const SCROLL_RESTORE_SELECTORS = [
-  '.stack-pane',
-  'section[data-section="toolTimeline"] .chart-scroll',
-  'section[data-section="tools"] .tools-scroll',
-  'section[data-section="table"] .table-scroll'
-];
+/**
+ * Every inner scrollable container class the page uses. Scroll positions must
+ * survive any full re-render — selection updates and the periodic data
+ * refresh alike (surfaces-and-privacy.md "Panel interaction rules"). This is
+ * deliberately a generic enumeration of container classes, not a per-section
+ * allowlist: an allowlist silently drops every scroller added later (the
+ * Prompt cost map's chart lost its horizontal position on refresh this way),
+ * so any new scrollable surface must only reuse one of these classes to
+ * inherit the guarantee.
+ */
+const SCROLL_CONTAINER_SELECTOR = '.stack-pane, .chart-scroll, .table-scroll, .tools-scroll';
+
+/**
+ * All scroll containers in DOM order, each with a stable key: owning section
+ * (or 'root' outside any) + class + occurrence index. Keys match across a
+ * re-render as long as the same containers exist, without assuming one
+ * scroller per section.
+ */
+function scrollContainers(app: HTMLElement): { key: string; el: HTMLElement }[] {
+  const counters = new Map<string, number>();
+  return Array.from(app.querySelectorAll<HTMLElement>(SCROLL_CONTAINER_SELECTOR)).map((el) => {
+    const section = el.closest<HTMLElement>('[data-section]')?.dataset.section ?? 'root';
+    const base = `${section}/${el.className}`;
+    const n = counters.get(base) ?? 0;
+    counters.set(base, n + 1);
+    return { key: `${base}#${n}`, el };
+  });
+}
 
 function render(): void {
   const app = root();
-  const previousScrolls = SCROLL_RESTORE_SELECTORS.map((selector) => {
-    const el = app.querySelector<HTMLElement>(selector);
-    return el ? { selector, top: el.scrollTop, left: el.scrollLeft } : undefined;
-  });
+  const previousScrolls = new Map<string, { top: number; left: number }>();
+  for (const { key, el } of scrollContainers(app)) {
+    previousScrolls.set(key, { top: el.scrollTop, left: el.scrollLeft });
+  }
 
   app.innerHTML = '';
   if (LAYOUT_EXPERIMENTS) renderDesignBar(app);
@@ -2918,12 +2980,11 @@ function render(): void {
   app.appendChild(body);
   renderStorageFooter(app);
 
-  // Selections update panels in place: restore the scroll positions exactly,
-  // never animate or jump the page.
-  for (const saved of previousScrolls) {
+  // Re-renders update panels in place: restore every scroll position exactly
+  // (vertical and horizontal), never animate or jump the page.
+  for (const { key, el } of scrollContainers(app)) {
+    const saved = previousScrolls.get(key);
     if (!saved) continue;
-    const el = app.querySelector<HTMLElement>(saved.selector);
-    if (!el) continue;
     el.scrollTop = saved.top;
     el.scrollLeft = saved.left;
   }

@@ -220,6 +220,37 @@ export function isoGrowthDeltas(points: { contextDelta: number }[], count = 3, c
   return deltas.length > 0 ? deltas : [step];
 }
 
+// ---- calls-variant helpers (plans/2026-07/23/cost-map-calls-variant) ----
+
+/**
+ * Cache-write share of a prompt's total tokens, 0..1. The calls-variant color
+ * channel: cache writes are the expensive part of the token mix, so a high
+ * share explains a bubble whose cost outruns its context work. 0 when the
+ * prompt reports no tokens at all (no share of nothing, not NaN).
+ */
+export function cacheWriteShare(usage: UsageTokens): number {
+  const total = usage.cacheReadTokens + usage.cacheCreationTokens + usage.inputTokens + usage.outputTokens;
+  if (total <= 0) return 0;
+  return usage.cacheCreationTokens / total;
+}
+
+/**
+ * Nice tokens-per-call slopes for the calls variant's origin rays (y = k·x),
+ * the analog of `isoGrowthDeltas` for a ratio: points on one ray share an
+ * average context per call. Steps stop just past the steepest visible slope
+ * so every ray passes through plottable data territory.
+ */
+export function isoRateSlopes(points: { iterations: number; contextWork: number }[], count = 4): number[] {
+  const maxSlope = Math.max(0, ...points.filter((p) => p.iterations > 0).map((p) => p.contextWork / p.iterations));
+  if (maxSlope <= 0) return [];
+  const step = niceStep(maxSlope / count);
+  const slopes: number[] = [];
+  for (let k = 1; k <= count && k * step <= maxSlope * 1.05; k++) {
+    slopes.push(k * step);
+  }
+  return slopes.length > 0 ? slopes : [step];
+}
+
 // ---- overlap handling (DD-013) ----
 
 export interface OverlapOffset {
